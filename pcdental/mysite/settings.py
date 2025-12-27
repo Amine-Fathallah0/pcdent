@@ -37,7 +37,11 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'dentapp',
 ]
+
+# Custom user model
+AUTH_USER_MODEL = 'dentapp.User'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -75,7 +79,7 @@ WSGI_APPLICATION = 'mysite.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',  # Use psycopg2 for PostgreSQL
+        'ENGINE': 'django.db.backends.postgresql',  
         'NAME': 'Dentapp',  # Replace with your database namepy
         'USER': 'postgres',  # Replace with your database user
         'PASSWORD': 'amine',  # Replace with your database password

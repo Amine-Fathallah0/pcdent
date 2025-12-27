@@ -1,3 +1,4 @@
-from django.shortcuts import render
+# Django REST API views will go here
+# Front-end is now a separate React service
 
-# Create your views here.
+# TODO: Create API endpoints using Django REST Framework
