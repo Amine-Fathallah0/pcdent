@@ -22,5 +22,9 @@ db.sqlite3-journal
 *.swp
 *.swo
 
+# Node
+node_modules/
+front-end/node_modules/
+
 # Environment variables
 .env

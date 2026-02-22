@@ -1,0 +1,112 @@
+.card {
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+
+/* Variants */
+
+.card--default {
+    border: 1px solid var(--color-border);
+}
+
+.card--elevated {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.card--outlined {
+    border: 1px solid var(--color-border);
+    background: transparent;
+}
+
+.card--interactive {
+    border: 1px solid var(--color-border);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.card--interactive:hover {
+    border-color: var(--color-primary);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+}
+
+.card--interactive:active {
+    transform: translateY(0);
+}
+
+
+/* Padding */
+
+.card--padding-none {
+    padding: 0;
+}
+
+.card--padding-sm {
+    padding: var(--space-12);
+}
+
+.card--padding-md {
+    padding: var(--space-20);
+}
+
+.card--padding-lg {
+    padding: var(--space-32);
+}
+
+
+/* Card Sections */
+
+.card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: var(--space-16) var(--space-20);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.card--padding-none>.card__header {
+    padding: var(--space-16) var(--space-20);
+}
+
+.card__header-content {
+    flex: 1;
+}
+
+.card__title {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+}
+
+.card__subtitle {
+    margin: var(--space-4) 0 0;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+.card__header-action {
+    margin-left: var(--space-16);
+}
+
+.card__body {
+    padding: var(--space-20);
+}
+
+.card--padding-none>.card__body {
+    padding: var(--space-20);
+}
+
+.card__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-12);
+    padding: var(--space-16) var(--space-20);
+    border-top: 1px solid var(--color-border);
+    background: var(--color-background);
+}
+
+.card--padding-none>.card__footer {
+    padding: var(--space-16) var(--space-20);
+}

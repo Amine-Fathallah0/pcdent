@@ -1,0 +1,370 @@
+.treatment-planning {
+    padding: var(--space-24);
+}
+
+.treatment-planning__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-24);
+}
+
+.treatment-planning__title {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-bold);
+    margin: 0;
+}
+
+.treatment-planning__subtitle {
+    margin: var(--space-4) 0 0;
+    color: var(--color-text-secondary);
+}
+
+.treatment-planning__actions {
+    display: flex;
+    gap: var(--space-12);
+}
+
+
+/* Plan Grid */
+
+.plan-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: var(--space-20);
+}
+
+
+/* Plan Card */
+
+.plan-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-20);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.plan-card:hover {
+    border-color: var(--color-primary);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+}
+
+.plan-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: var(--space-16);
+}
+
+.plan-card__title {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    margin: 0;
+}
+
+.plan-card__patient {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    margin: var(--space-4) 0 0;
+}
+
+.plan-card__body {
+    display: flex;
+    gap: var(--space-20);
+    align-items: center;
+}
+
+.plan-card__details {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+}
+
+.plan-card__stat {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+
+/* Progress Ring */
+
+.progress-ring__background {
+    fill: none;
+    stroke: var(--color-bg-1);
+}
+
+.progress-ring__progress {
+    fill: none;
+    stroke: var(--color-primary);
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.5s ease;
+}
+
+.progress-ring__text {
+    fill: var(--color-text);
+    font-size: 14px;
+    font-weight: var(--font-weight-semibold);
+}
+
+
+/* Plan Detail */
+
+.plan-detail {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.plan-detail__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-24);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-background);
+}
+
+.plan-detail__title {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    margin: 0;
+}
+
+.plan-detail__meta {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    margin: var(--space-4) 0 0;
+}
+
+.plan-detail__status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-16);
+}
+
+.plan-detail__content {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: var(--space-24);
+    padding: var(--space-24);
+}
+
+.plan-detail__main h3 {
+    margin: 0 0 var(--space-16);
+    font-size: var(--font-size-lg);
+}
+
+.plan-detail__sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-16);
+}
+
+
+/* Procedures Table */
+
+.procedures-table-wrapper {
+    overflow-x: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+}
+
+.procedures-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.procedures-table th,
+.procedures-table td {
+    padding: var(--space-12) var(--space-16);
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.procedures-table th {
+    background: var(--color-background);
+    font-weight: var(--font-weight-medium);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+.procedures-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.procedures-table tbody tr:hover {
+    background: var(--color-bg-1);
+}
+
+.procedure-row__code {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.procedure-row__code-badge {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-primary);
+}
+
+.procedure-row__tooth {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+}
+
+.procedure-row__cost {
+    font-weight: var(--font-weight-medium);
+    font-family: var(--font-family-mono);
+}
+
+.procedure-row__actions {
+    text-align: right;
+}
+
+.procedure-row__completed-date {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-4);
+    font-size: var(--font-size-sm);
+    color: var(--color-success);
+}
+
+
+/* Cost Summary */
+
+.cost-summary {
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-20);
+}
+
+.cost-summary__title {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    margin: 0 0 var(--space-16);
+}
+
+.cost-summary__grid {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+}
+
+.cost-summary__item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.cost-summary__label {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.cost-summary__value {
+    font-weight: var(--font-weight-medium);
+    font-family: var(--font-family-mono);
+}
+
+.cost-summary__item--success .cost-summary__value {
+    color: var(--color-success);
+}
+
+.cost-summary__item--primary .cost-summary__value {
+    color: var(--color-primary);
+}
+
+.cost-summary__value--large {
+    font-size: var(--font-size-xl);
+}
+
+.cost-summary__divider {
+    height: 1px;
+    background: var(--color-border);
+    margin: var(--space-8) 0;
+}
+
+
+/* Consent Badge */
+
+.consent-badge {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    padding: var(--space-16);
+    background: #D1FAE5;
+    border-radius: var(--radius-md);
+    color: #047857;
+}
+
+.consent-badge__label {
+    display: block;
+    font-weight: var(--font-weight-medium);
+}
+
+.consent-badge__date {
+    display: block;
+    font-size: var(--font-size-sm);
+    opacity: 0.8;
+}
+
+
+/* Export Options */
+
+.export-options p {
+    margin: 0 0 var(--space-16);
+    color: var(--color-text-secondary);
+}
+
+.export-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-16);
+    width: 100%;
+    padding: var(--space-16);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s;
+}
+
+.export-option:hover {
+    border-color: var(--color-primary);
+    background: var(--color-bg-1);
+}
+
+.export-option__title {
+    display: block;
+    font-weight: var(--font-weight-medium);
+}
+
+.export-option__desc {
+    display: block;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+
+/* Responsive */
+
+@media (max-width: 900px) {
+    .plan-detail__content {
+        grid-template-columns: 1fr;
+    }
+    .plan-detail__sidebar {
+        order: -1;
+    }
+}
