@@ -88,6 +88,16 @@ class UserDetailView(APIView):
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
+class LogoutView(APIView):
+    """
+    API View to logout the current authenticated user by deleting token.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        Token.objects.filter(user=request.user).delete()
+        return Response({"detail": "Logged out successfully."}, status=status.HTTP_200_OK)
+
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
 def api_root(request):
@@ -95,6 +105,7 @@ def api_root(request):
         "message": "Welcome to the Dentist API",
         "endpoints": {
             "login": "/login/",
+            "logout": "/logout/",
             "register_dentist": "/dentists/register/",
             "me": "/me/"
         }
