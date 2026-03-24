@@ -40,44 +40,61 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-gray-50">
-      <Card className="w-[350px]">
-        <CardHeader>
-          <CardTitle>Login</CardTitle>
-        </CardHeader>
-        <form onSubmit={handleLogin}>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="username" className="text-sm font-medium">Username</label>
-              <Input
-                id="username"
-                type="text"
-                placeholder="Enter your username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <label htmlFor="password" className="text-sm font-medium">Password</label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
-          </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button variant="outline" type="button" onClick={() => navigate('/')}>Cancel</Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? 'Logging in...' : 'Login'}
-            </Button>
-          </CardFooter>
-        </form>
-      </Card>
+    <div className="auth-page">
+      <div className="landing-orbs" aria-hidden="true">
+        <span className="orb orb-1" />
+        <span className="orb orb-2" />
+        <span className="orb orb-3" />
+      </div>
+      <div className="auth-container">
+        <Card className="auth-card">
+          <CardHeader>
+            <span className="auth-badge">Welcome back</span>
+            <CardTitle className="auth-title">Sign in to your workspace</CardTitle>
+          </CardHeader>
+          <form onSubmit={handleLogin}>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <label htmlFor="username" className="text-sm font-medium">Username</label>
+                <Input
+                  id="username"
+                  type="text"
+                  placeholder="Enter your username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="password" className="text-sm font-medium">Password</label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-col gap-3">
+              <Button type="submit" className="primary-cta w-full" disabled={loading}>
+                {loading ? 'Logging in...' : 'Login'}
+              </Button>
+              <Button variant="outline" type="button" onClick={() => navigate('/')} className="w-full">
+                Back to home
+              </Button>
+              <button
+                type="button"
+                onClick={() => navigate('/signup')}
+                className="auth-link"
+              >
+                New here? Create an account
+              </button>
+            </CardFooter>
+          </form>
+        </Card>
+      </div>
     </div>
   );
 };

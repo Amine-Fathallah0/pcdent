@@ -15,7 +15,11 @@ const DashboardLayout = ({ role, userName = 'User', userId = '', children, activ
   const navigate = useNavigate();
 
   const handleLogout = () => {
-    navigate('/');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user_id');
+    localStorage.removeItem('full_name');
+    localStorage.removeItem('user_role');
+    navigate('/login', { replace: true });
   };
 
   const getRoleLabel = () => {
