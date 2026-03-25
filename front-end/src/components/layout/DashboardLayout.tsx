@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import NotificationCenter from '../notifications/NotificationCenter';
+import api from '../../lib/api';
 
 interface DashboardLayoutProps {
   role: 'patient' | 'dentist' | 'admin';
@@ -14,8 +15,22 @@ interface DashboardLayoutProps {
 const DashboardLayout = ({ role, userName = 'User', userId = '', children, activeView, onViewChange }: DashboardLayoutProps) => {
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    navigate('/');
+  const clearLocalAuth = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user_id');
+    localStorage.removeItem('full_name');
+    localStorage.removeItem('user_role');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.post('logout/');
+    } catch (error) {
+      console.error('Logout API failed, clearing local session anyway:', error);
+    } finally {
+      clearLocalAuth();
+      navigate('/login', { replace: true });
+    }
   };
 
   const getRoleLabel = () => {

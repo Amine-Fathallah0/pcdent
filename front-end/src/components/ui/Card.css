@@ -1,27 +1,30 @@
 .card {
     background: var(--color-surface);
-    border-radius: var(--radius-lg);
+    border-radius: 30px;
     overflow: hidden;
+    border: 1px solid var(--color-border);
+    box-shadow: 0 10px 40px rgba(15, 23, 42, 0.08);
 }
 
 
 /* Variants */
 
 .card--default {
-    border: 1px solid var(--color-border);
+    
 }
 
 .card--elevated {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 12px 48px rgba(14, 165, 164, 0.12);
 }
 
 .card--outlined {
-    border: 1px solid var(--color-border);
+    
     background: transparent;
+    
 }
 
 .card--interactive {
-    border: 1px solid var(--color-border);
+    
     cursor: pointer;
     transition: all 0.2s ease;
 }
@@ -44,15 +47,15 @@
 }
 
 .card--padding-sm {
-    padding: var(--space-12);
+    padding: var(--space-16);
 }
 
 .card--padding-md {
-    padding: var(--space-20);
+    padding: 32px;
 }
 
 .card--padding-lg {
-    padding: var(--space-32);
+    padding: 48px;
 }
 
 
@@ -62,7 +65,7 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    padding: var(--space-16) var(--space-20);
+    padding: 32px 32px 16px;
     border-bottom: 1px solid var(--color-border);
 }
 
@@ -91,22 +94,22 @@
 }
 
 .card__body {
-    padding: var(--space-20);
+    padding: 32px;
 }
 
 .card--padding-none>.card__body {
-    padding: var(--space-20);
+    padding: 32px;
 }
 
 .card__footer {
     display: flex;
     justify-content: flex-end;
     gap: var(--space-12);
-    padding: var(--space-16) var(--space-20);
+    padding: 24px 32px;
     border-top: 1px solid var(--color-border);
     background: var(--color-background);
 }
 
 .card--padding-none>.card__footer {
-    padding: var(--space-16) var(--space-20);
+    padding: 24px 32px;
 }
