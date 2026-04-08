@@ -2,8 +2,7 @@ import {
   useState, 
   useCallback, 
   useMemo, 
-  memo,
-  type ReactNode 
+  memo
 } from 'react';
 import {
   getTreatmentPlansByPatient,
@@ -194,12 +193,12 @@ const ProcedureRow = memo(({
       </td>
       <td>{procedure.description}</td>
       <td>
-        <Badge variant={priorityConfig.variant as any} size="sm">
+        <Badge variant={priorityConfig.variant as any}>
           {priorityConfig.label}
         </Badge>
       </td>
       <td>
-        <Badge variant={statusConfig.variant as any} size="sm">
+        <Badge variant={statusConfig.variant as any}>
           {statusConfig.label}
         </Badge>
       </td>
@@ -453,7 +452,6 @@ const TreatmentPlanning = ({
               <div className="plan-detail__status">
                 <Badge 
                   variant={STATUS_CONFIG[selectedPlan.status].variant as any} 
-                  size="md"
                 >
                   {STATUS_CONFIG[selectedPlan.status].label}
                 </Badge>

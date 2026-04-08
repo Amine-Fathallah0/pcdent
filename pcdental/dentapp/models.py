@@ -154,6 +154,40 @@ class CTScan(models.Model):
     def dentist(self):
         return self.dentist_patient_link.dentist
 
+
+class AIProcessingJob(models.Model):
+    STATUS_CHOICES = [
+        ('queued', 'Queued'),
+        ('segmentation_pending', 'Segmentation Pending'),
+        ('report_requested', 'Report Requested'),
+        ('draft_ready', 'Draft Ready'),
+        ('dentist_reviewed', 'Dentist Reviewed'),
+        ('finalized', 'Finalized'),
+        ('failed', 'Failed'),
+    ]
+
+    job_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ct_scan = models.ForeignKey(CTScan, on_delete=models.CASCADE, related_name='processing_jobs')
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='queued')
+    is_fallback_mode = models.BooleanField(default=True)
+    annotated_image_url = models.URLField(blank=True)
+    draft_report = models.TextField(blank=True)
+    dentist_notes = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['ct_scan', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"Job {self.job_id} - {self.status}"
+
 # class AIProcessingJob(models.Model):
 #     """Tracks AI processing workflow for CT scans"""
 #     STATUS_CHOICES = [

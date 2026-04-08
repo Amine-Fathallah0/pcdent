@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import type { ReactElement } from 'react';
 import { Toaster } from './components/ui/sonner';
 import LandingPage from './pages/LandingPage';
 import PatientDashboard from './pages/PatientDashboard';
@@ -15,7 +16,7 @@ const ProtectedRoute = ({
   element,
 }: {
   allowedRole: AllowedRole;
-  element: JSX.Element;
+  element: ReactElement;
 }) => {
   const token = localStorage.getItem('token');
   const role = localStorage.getItem('user_role');

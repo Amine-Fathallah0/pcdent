@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo, memo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import AppointmentList from '../components/appointments/AppointmentList';
 import AppointmentScheduler from '../components/appointments/AppointmentScheduler';
@@ -6,18 +6,16 @@ import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
 import FullReportModal from '../components/FullReportModal';
 import { Icon } from '../components/ui';
+import { fetchJobs, fetchMyLinks, generateDraft, uploadCTScan, type AIJobDto } from '../lib/backendApi';
 import { 
   database, 
+  createCase,
   getCasesByPatient, 
   getPatientResults, 
   getAppointmentsByPatient,
   getUpcomingAppointments,
-  getPatientStats,
-  createCase,
-  simulateAIAnalysis,
   addNotification,
   formatDate, 
-  formatDateTime,
   formatTime,
   getRelativeDate,
   getAppointmentTypeLabel,
@@ -48,6 +46,44 @@ const validateFile = (file: File): { valid: boolean; error?: string } => {
   return { valid: true };
 };
 
+const getBackendJobStatusLabel = (status: AIJobDto['status']): string => {
+  switch (status) {
+    case 'queued':
+      return 'Queued';
+    case 'segmentation_pending':
+      return 'Segmentation Pending';
+    case 'report_requested':
+      return 'Report Requested';
+    case 'draft_ready':
+      return 'Draft Ready for Review';
+    case 'dentist_reviewed':
+      return 'Reviewed by Dentist';
+    case 'finalized':
+      return 'Finalized';
+    case 'failed':
+      return 'Processing Failed';
+    default:
+      return 'Unknown Status';
+  }
+};
+
+const getBackendJobStatusClass = (status: AIJobDto['status']): string => {
+  switch (status) {
+    case 'queued':
+    case 'segmentation_pending':
+    case 'report_requested':
+      return 'uploaded';
+    case 'draft_ready':
+    case 'failed':
+      return 'needs-review';
+    case 'dentist_reviewed':
+    case 'finalized':
+      return 'finalized';
+    default:
+      return 'uploaded';
+  }
+};
+
 const PatientDashboard = () => {
   const [activeView, setActiveView] = useState('patient-dashboard');
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
@@ -61,15 +97,91 @@ const PatientDashboard = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'processing' | 'complete' | 'error'>('idle');
   const [isDragging, setIsDragging] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0); // Force re-render for dynamic data
+  const [refreshKey, setRefreshKey] = useState(0); // Triggers backend data refresh after local updates
+  const [backendJobs, setBackendJobs] = useState<AIJobDto[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Get dynamic data with useMemo for performance
-  const patientCases = useMemo(() => getCasesByPatient(CURRENT_PATIENT_ID), [refreshKey]);
-  const patientResults = useMemo(() => getPatientResults(CURRENT_PATIENT_ID), [refreshKey]);
+  const loadBackendJobs = useCallback(async () => {
+    try {
+      const jobs = await fetchJobs();
+      setBackendJobs(jobs);
+    } catch (error) {
+      console.error('Unable to load patient backend jobs', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBackendJobs();
+  }, [refreshKey, loadBackendJobs]);
+
+  useEffect(() => {
+    if (activeView !== 'patient-results') {
+      return;
+    }
+
+    void loadBackendJobs();
+    const intervalId = window.setInterval(() => {
+      void loadBackendJobs();
+    }, 15000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeView, loadBackendJobs]);
+
+  // Dynamic data reads on each render. setRefreshKey triggers re-render when mutated data changes.
+  const patientCases = getCasesByPatient(CURRENT_PATIENT_ID);
+  const patientResults = getPatientResults(CURRENT_PATIENT_ID);
   const { treatmentSuggestions } = database;
-  const upcomingAppointments = useMemo(() => getUpcomingAppointments(CURRENT_PATIENT_ID, 'patient'), [refreshKey]);
-  const patientStats = useMemo(() => getPatientStats(CURRENT_PATIENT_ID), [refreshKey]);
+  const upcomingAppointments = getUpcomingAppointments(CURRENT_PATIENT_ID, 'patient');
+
+  const jobsById = useMemo(() => {
+    const map = new Map<string, AIJobDto>();
+    for (const job of backendJobs) {
+      map.set(job.job_id, job);
+    }
+    return map;
+  }, [backendJobs]);
+
+  const backendLinkedResults = useMemo(
+    () =>
+      [...patientCases]
+        .filter((caseItem) => Boolean(caseItem.backendJobId))
+        .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()),
+    [patientCases]
+  );
+
+  const displayResults = backendLinkedResults.length > 0 ? backendLinkedResults : patientResults;
+
+  const resolvedResultCards = useMemo(
+    () =>
+      displayResults.map((caseItem) => {
+        const matchedJob = caseItem.backendJobId ? jobsById.get(caseItem.backendJobId) : undefined;
+        const statusLabel = matchedJob ? getBackendJobStatusLabel(matchedJob.status) : getStatusLabel(caseItem.status);
+        const statusClass = matchedJob ? getBackendJobStatusClass(matchedJob.status) : getStatusClass(caseItem.status);
+        const completedDate = matchedJob?.completed_at || caseItem.sentAt;
+        const metaDate = completedDate || matchedJob?.updated_at || caseItem.finalizedAt || caseItem.uploadedAt;
+        const metaLabel = completedDate ? 'Completed' : 'Last Updated';
+        const isReady = matchedJob
+          ? matchedJob.status === 'dentist_reviewed' || matchedJob.status === 'finalized'
+          : caseItem.status === 'FINALIZED' || caseItem.status === 'SENT_TO_PATIENT';
+
+        return {
+          caseItem,
+          statusLabel,
+          statusClass,
+          metaDate,
+          metaLabel,
+          isReady,
+        };
+      }),
+    [displayResults, jobsById]
+  );
+
+  const readyResultsCount = useMemo(
+    () => resolvedResultCards.filter((result) => result.isReady).length,
+    [resolvedResultCards]
+  );
 
   // Calculate stats with useMemo
   const { totalVisits, activeTreatments, highPriorityTreatments, lastVisitCase } = useMemo(() => ({
@@ -154,35 +266,59 @@ const PatientDashboard = () => {
 
     setUploadStatus('processing');
 
-    // Create the case
-    const newCase = createCase(
-      CURRENT_PATIENT_ID,
-      CURRENT_PATIENT_NAME,
-      'john.smith@email.com',
-      'dentist-001',
-      uploadPreview
-    );
+    try {
+      const links = await fetchMyLinks();
+      const currentUserId = localStorage.getItem('user_id');
+      const myLink = links.find((link) => link.patient === currentUserId) || links[0];
 
-    // Simulate AI analysis
-    const analyzedCase = await simulateAIAnalysis(newCase.id);
+      if (!myLink) {
+        throw new Error('No active dentist link found.');
+      }
 
-    if (analyzedCase) {
+      const uploaded = await uploadCTScan(
+        myLink.id,
+        uploadedFile,
+        `Patient upload: ${uploadedFile.name}`
+      );
+
+      const currentPatientUser = Object.values(database.users).find(
+        (user) => user.id === CURRENT_PATIENT_ID && user.role === 'patient'
+      );
+      const assignedDentistId =
+        currentPatientUser && 'assignedDentist' in currentPatientUser
+          ? currentPatientUser.assignedDentist
+          : undefined;
+
+      const createdCase = createCase(
+        CURRENT_PATIENT_ID,
+        CURRENT_PATIENT_NAME,
+        currentPatientUser?.email || 'patient@email.com',
+        assignedDentistId || 'dentist-001',
+        null,
+        {
+          backendJobId: uploaded.job.job_id,
+          ctScanId: uploaded.scan.id,
+        }
+      );
+
+      createdCase.status = 'AI_ANALYZED';
+      createdCase.aiAnalyzedAt = new Date().toISOString();
+
+      await generateDraft(uploaded.job.job_id);
+
       setUploadStatus('complete');
-      
-      // Notify user
+
       addNotification({
         userId: CURRENT_PATIENT_ID,
         userRole: 'patient',
         type: 'case',
         title: 'Image Uploaded Successfully',
-        message: `Your panoramic X-ray has been uploaded and analyzed. ${analyzedCase.aiFindings.length} findings detected.`,
+        message: 'Your X-ray has been uploaded. Draft analysis is ready for dentist review.',
         actionUrl: 'patient-results'
       });
 
-      // Refresh data
       setRefreshKey(prev => prev + 1);
 
-      // Reset after delay
       setTimeout(() => {
         setUploadedFile(null);
         setUploadPreview(null);
@@ -190,10 +326,11 @@ const PatientDashboard = () => {
         setUploadStatus('idle');
         setActiveView('patient-results');
       }, 2000);
-    } else {
+    } catch (error) {
+      console.error(error);
       setUploadStatus('error');
     }
-  }, [uploadedFile, uploadPreview]);
+  }, [uploadedFile]);
 
   // Clear upload
   const clearUpload = useCallback(() => {
@@ -214,6 +351,29 @@ const PatientDashboard = () => {
 
   // Render Timeline from cases
   const renderTimeline = () => {
+    if (backendJobs.length > 0) {
+      const sortedJobs = [...backendJobs]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 3);
+
+      return (
+        <div className="timeline">
+          {sortedJobs.map((job) => (
+            <div className="timeline-item" key={job.job_id}>
+              <div className="timeline-date">{formatDate(job.created_at)}</div>
+              <div className="timeline-content">
+                <div className="timeline-title">CT Scan #{job.ct_scan_id}</div>
+                <div className="timeline-description">
+                  {job.is_fallback_mode ? 'Fallback analysis pipeline' : 'Standard analysis pipeline'}
+                </div>
+                <span className="timeline-status">{getBackendJobStatusLabel(job.status)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
     const sortedCases = [...patientCases].sort((a, b) => 
       new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
     ).slice(0, 3);
@@ -508,6 +668,10 @@ const PatientDashboard = () => {
     );
   };
 
+  // Kept for upcoming dedicated patient treatment/charting views.
+  void renderTreatmentPlans;
+  void renderClinicalOdontogram;
+
   const renderContent = () => {
     switch (activeView) {
       // ============== PATIENT DASHBOARD ==============
@@ -550,8 +714,8 @@ const PatientDashboard = () => {
                     <Icon name="check-circle" />
                   </div>
                 </div>
-                <div className="stat-value">{patientResults.length}</div>
-                <div className="stat-change">Ready to view</div>
+                <div className="stat-value">{readyResultsCount}</div>
+                <div className="stat-change">{displayResults.length} total tracked</div>
               </div>
             </div>
 
@@ -617,19 +781,21 @@ const PatientDashboard = () => {
           <>
             <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>My Results</h2>
             
-            {patientResults.length > 0 ? (
+            {resolvedResultCards.length > 0 ? (
               <div className="results-list">
-                {patientResults.map(caseItem => (
+                {resolvedResultCards.map(({ caseItem, statusLabel, statusClass, metaDate, metaLabel }) => {
+                  return (
                   <div className="result-card card" key={caseItem.id} style={{ marginBottom: 'var(--space-16)' }}>
                     <div className="result-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-16)' }}>
                       <div className="result-info">
                         <h3 className="result-title" style={{ margin: 0 }}>{caseItem.imageType} Analysis</h3>
                         <div className="result-meta" style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)' }}>
-                          Completed: {caseItem.sentAt ? formatDate(caseItem.sentAt) : 'N/A'}
+                          {metaLabel}: {metaDate ? formatDate(metaDate) : 'N/A'}
                         </div>
                       </div>
-                      <span className={`status-badge ${getStatusClass(caseItem.status)}`}>Results Ready</span>
+                      <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
                     </div>
+
                     
                     <div className="result-summary" style={{ display: 'flex', gap: 'var(--space-24)', marginBottom: 'var(--space-16)' }}>
                       <div className="summary-stat" style={{ textAlign: 'center' }}>
@@ -715,7 +881,8 @@ const PatientDashboard = () => {
                       </button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="card">

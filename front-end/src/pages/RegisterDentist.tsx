@@ -25,17 +25,33 @@ const RegisterDentist: React.FC = () => {
     });
   };
 
+  const getErrorMessage = (error: any, fallback: string) => {
+    const data = error.response?.data;
+    if (!data) return fallback;
+    if (typeof data === 'string') return data;
+    if (data.detail) return data.detail;
+
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(data)) {
+      if (Array.isArray(value)) {
+        parts.push(`${key}: ${value.join(', ')}`);
+      } else if (typeof value === 'string') {
+        parts.push(`${key}: ${value}`);
+      }
+    }
+
+    return parts.length ? parts.join(' | ') : fallback;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     const payload = {
-      user: {
-        username: formData.username,
-        email: formData.email,
-        password: formData.password,
-        full_name: formData.full_name,
-      },
+      username: formData.username,
+      email: formData.email,
+      password: formData.password,
+      full_name: formData.full_name,
       location: formData.location,
       contact_number: formData.contact_number
     };
@@ -46,8 +62,7 @@ const RegisterDentist: React.FC = () => {
       navigate('/login');
     } catch (error: any) {
       console.error(error);
-      const msg = error.response?.data?.detail || 'Registration failed. Please check your inputs.';
-      toast.error(msg);
+      toast.error(getErrorMessage(error, 'Registration failed. Please check your inputs.'));
     } finally {
       setLoading(false);
     }

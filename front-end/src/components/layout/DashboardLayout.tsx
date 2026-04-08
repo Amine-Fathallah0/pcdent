@@ -16,6 +16,8 @@ const DashboardLayout = ({ role, userName = 'User', userId = '', children, activ
   const navigate = useNavigate();
 
   const clearLocalAuth = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('token');
     localStorage.removeItem('user_id');
     localStorage.removeItem('full_name');
@@ -24,7 +26,8 @@ const DashboardLayout = ({ role, userName = 'User', userId = '', children, activ
 
   const handleLogout = async () => {
     try {
-      await api.post('logout/');
+      const refresh = localStorage.getItem('refresh_token');
+      await api.post('logout/', { refresh });
     } catch (error) {
       console.error('Logout API failed, clearing local session anyway:', error);
     } finally {

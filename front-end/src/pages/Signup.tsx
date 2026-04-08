@@ -64,8 +64,10 @@ const Signup: React.FC = () => {
       password: formData.password,
     });
 
-    const { token, user_id, full_name } = loginResponse.data;
-    localStorage.setItem('token', token);
+    const { access, refresh, user_id, full_name } = loginResponse.data;
+    localStorage.setItem('access_token', access);
+    localStorage.setItem('refresh_token', refresh);
+    localStorage.setItem('token', access);
     localStorage.setItem('user_id', user_id);
     localStorage.setItem('full_name', full_name);
     localStorage.setItem('user_role', role);
@@ -74,14 +76,16 @@ const Signup: React.FC = () => {
   };
 
   const persistAuthAndRedirect = (
-    data: { token?: string; user_id?: string; full_name?: string },
+    data: { access?: string; refresh?: string; user_id?: string; full_name?: string },
     role: 'dentist' | 'patient'
   ) => {
-    if (!data.token || !data.user_id || !data.full_name) {
+    if (!data.access || !data.refresh || !data.user_id || !data.full_name) {
       return false;
     }
 
-    localStorage.setItem('token', data.token);
+    localStorage.setItem('access_token', data.access);
+    localStorage.setItem('refresh_token', data.refresh);
+    localStorage.setItem('token', data.access);
     localStorage.setItem('user_id', data.user_id);
     localStorage.setItem('full_name', data.full_name);
     localStorage.setItem('user_role', role);
@@ -96,12 +100,10 @@ const Signup: React.FC = () => {
     try {
       if (userType === 'dentist') {
         const payload = {
-          user: {
-            username: formData.username,
-            email: formData.email,
-            password: formData.password,
-            full_name: formData.full_name,
-          },
+          username: formData.username,
+          email: formData.email,
+          password: formData.password,
+          full_name: formData.full_name,
           location: formData.location,
           contact_number: formData.contact_number
         };
@@ -121,12 +123,10 @@ const Signup: React.FC = () => {
         }
       } else if (userType === 'patient') {
         const payload = {
-          user: {
-            username: formData.username,
-            email: formData.email,
-            password: formData.password,
-            full_name: formData.full_name,
-          },
+          username: formData.username,
+          email: formData.email,
+          password: formData.password,
+          full_name: formData.full_name,
           date_of_birth: formData.date_of_birth,
           contact_number: formData.contact_number,
           address: formData.address

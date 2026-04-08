@@ -1,10 +1,12 @@
-import { useState, useRef, useCallback, type JSX } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo, type JSX } from 'react';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import AppointmentList from '../components/appointments/AppointmentList';
 import AppointmentScheduler from '../components/appointments/AppointmentScheduler';
 import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
+import { fetchJobs, fetchMyLinks, generateDraft, reviewJob, uploadCTScan, type AIJobDto } from '../lib/backendApi';
 import {
+  createCase,
   database,
   getCasesByDentist,
   getPatientsByDentist,
@@ -12,14 +14,10 @@ import {
   getAppointmentsByDentist,
   getUpcomingAppointments,
   getTodaysAppointments,
-  getDentistStats,
-  createCase,
-  simulateAIAnalysis,
   addNotification,
   formatDate,
   formatDateTime,
   formatTime,
-  getRelativeDate,
   getAppointmentTypeLabel,
   getStatusLabel,
   getStatusClass,
@@ -69,15 +67,76 @@ const icons: Record<string, JSX.Element> = {
 
 const Icon = ({ name }: { name: string }) => icons[name] || <span>{name}</span>;
 
+type InboxTab = 'new-uploads' | 'needs-review' | 'finalized';
+
+const mapBackendStatusToInboxTab = (status: AIJobDto['status']): InboxTab => {
+  switch (status) {
+    case 'queued':
+    case 'segmentation_pending':
+    case 'report_requested':
+      return 'new-uploads';
+    case 'draft_ready':
+    case 'failed':
+      return 'needs-review';
+    case 'dentist_reviewed':
+    case 'finalized':
+      return 'finalized';
+    default:
+      return 'new-uploads';
+  }
+};
+
+const getBackendJobStatusLabel = (status: AIJobDto['status']): string => {
+  switch (status) {
+    case 'queued':
+      return 'Queued';
+    case 'segmentation_pending':
+      return 'Segmentation Pending';
+    case 'report_requested':
+      return 'Report Requested';
+    case 'draft_ready':
+      return 'Draft Ready for Review';
+    case 'dentist_reviewed':
+      return 'Dentist Reviewed';
+    case 'finalized':
+      return 'Finalized';
+    case 'failed':
+      return 'Processing Failed';
+    default:
+      return 'Unknown Status';
+  }
+};
+
+const mapBackendJobToCaseStatus = (status: AIJobDto['status']): Case['status'] => {
+  switch (status) {
+    case 'queued':
+    case 'segmentation_pending':
+      return 'UPLOADED';
+    case 'report_requested':
+      return 'AI_ANALYZED';
+    case 'draft_ready':
+    case 'failed':
+      return 'NEEDS_REVIEW';
+    case 'dentist_reviewed':
+      return 'FINALIZED';
+    case 'finalized':
+      return 'SENT_TO_PATIENT';
+    default:
+      return 'UPLOADED';
+  }
+};
+
 // Case Review Modal Component
 const CaseReviewModal = ({
   caseData,
   onClose,
+  onMarkReviewed,
   onSendToPatient
 }: {
   caseData: Case;
   onClose: () => void;
-  onSendToPatient: (caseId: string) => void;
+  onMarkReviewed: (caseId: string, dentistNotes: string) => Promise<void>;
+  onSendToPatient: (caseId: string, dentistNotes: string) => Promise<void>;
 }) => {
   const [findingsState, setFindingsState] = useState(
     caseData.aiFindings.map(f => ({ ...f, reviewed: false, action: 'pending' as 'pending' | 'accepted' | 'modified' | 'rejected' }))
@@ -221,15 +280,19 @@ const CaseReviewModal = ({
             {allReviewed ? '✓ All findings reviewed' : `${findingsState.filter(f => f.reviewed).length}/${findingsState.length} findings reviewed`}
           </div>
           <div style={{ display: 'flex', gap: 'var(--space-12)' }}>
-            <button className="btn btn--outline" onClick={onClose}>
+            <button
+              className="btn btn--outline"
+              onClick={() => {
+                void onMarkReviewed(caseData.id, patientExplanation);
+              }}
+            >
               Save Draft
             </button>
             <button 
               className="btn btn--primary" 
               disabled={!allReviewed}
               onClick={() => {
-                onSendToPatient(caseData.id);
-                onClose();
+                void onSendToPatient(caseData.id, patientExplanation);
               }}
             >
               <Icon name="send" /> Finalize & Send to Patient
@@ -243,12 +306,16 @@ const CaseReviewModal = ({
 
 const DentistDashboard = () => {
   const [activeView, setActiveView] = useState('dentist-dashboard');
-  const [activeInboxTab, setActiveInboxTab] = useState('new-uploads');
+  const [activeInboxTab, setActiveInboxTab] = useState<InboxTab>('new-uploads');
+  const [inboxDataSource, setInboxDataSource] = useState<'mock' | 'backend'>('mock');
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
   const [appointments, setAppointments] = useState<Appointment[]>(getAppointmentsByDentist(CURRENT_DENTIST_ID));
   const [refreshKey, setRefreshKey] = useState(0); // Force re-render for dynamic data
+  const [backendJobs, setBackendJobs] = useState<AIJobDto[]>([]);
+  const [backendJobsLoading, setBackendJobsLoading] = useState(false);
+  const [backendJobsError, setBackendJobsError] = useState<string | null>(null);
   
   // Upload state
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -291,13 +358,81 @@ const DentistDashboard = () => {
   const [toothNotes, setToothNotes] = useState<Record<number, string>>({});
   const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
+  const loadJobs = useCallback(async () => {
+    if (activeView !== 'dentist-inbox') {
+      return;
+    }
+
+    setBackendJobsLoading(true);
+    setBackendJobsError(null);
+    try {
+      const jobs = await fetchJobs();
+      setBackendJobs(jobs);
+    } catch (error) {
+      console.error(error);
+      setBackendJobsError('Unable to load backend job statuses.');
+    } finally {
+      setBackendJobsLoading(false);
+    }
+  }, [activeView]);
+
+  useEffect(() => {
+    void loadJobs();
+  }, [loadJobs, refreshKey]);
+
+  useEffect(() => {
+    if (activeView !== 'dentist-inbox') {
+      return;
+    }
+
+    void loadJobs();
+    const intervalId = window.setInterval(() => {
+      void loadJobs();
+    }, 15000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeView, loadJobs]);
+
   // Get dynamic data from database
   const dentistCases = getCasesByDentist(CURRENT_DENTIST_ID);
   const myPatients = getPatientsByDentist(CURRENT_DENTIST_ID);
   const { dentistProfile } = database;
   const upcomingAppointments = getUpcomingAppointments(CURRENT_DENTIST_ID, 'dentist');
   const todaysAppointments = getTodaysAppointments(CURRENT_DENTIST_ID);
-  const dentistStats = getDentistStats(CURRENT_DENTIST_ID);
+
+  const backendJobsById = useMemo(() => {
+    const map = new Map<string, AIJobDto>();
+    for (const job of backendJobs) {
+      map.set(job.job_id, job);
+    }
+    return map;
+  }, [backendJobs]);
+
+  const resolvedDentistCases = useMemo(
+    () =>
+      dentistCases.map((caseItem) => {
+        const linkedJob = caseItem.backendJobId ? backendJobsById.get(caseItem.backendJobId) : undefined;
+        if (!linkedJob) {
+          return caseItem;
+        }
+
+        return {
+          ...caseItem,
+          status: mapBackendJobToCaseStatus(linkedJob.status),
+          uploadedAt: linkedJob.created_at || caseItem.uploadedAt,
+          aiAnalyzedAt: linkedJob.updated_at || caseItem.aiAnalyzedAt,
+          finalizedAt: linkedJob.completed_at || caseItem.finalizedAt,
+          sentAt:
+            linkedJob.status === 'finalized'
+              ? linkedJob.completed_at || caseItem.sentAt || caseItem.finalizedAt
+              : caseItem.sentAt,
+          patientExplanation: caseItem.patientExplanation || linkedJob.draft_report || null,
+        };
+      }),
+    [dentistCases, backendJobsById]
+  );
 
   // File validation
   const validateFile = (file: File): { valid: boolean; error?: string } => {
@@ -391,21 +526,47 @@ const DentistDashboard = () => {
 
     setUploadStatus('processing');
 
-    // Create the case
-    const newCase = createCase(
-      patient.id,
-      patient.name,
-      patient.email,
-      CURRENT_DENTIST_ID,
-      uploadPreview
-    );
+    try {
+      const links = await fetchMyLinks();
+      const activeLink = links[0];
+      if (!activeLink) {
+        throw new Error('No active patient links found for this dentist account.');
+      }
 
-    // Simulate AI analysis
-    const analyzedCase = await simulateAIAnalysis(newCase.id);
+      const uploaded = await uploadCTScan(
+        activeLink.id,
+        uploadedFile,
+        `Dentist upload for ${patient.name}: ${uploadedFile.name}`
+      );
 
-    if (analyzedCase) {
+      const createdCase = createCase(
+        patient.id,
+        patient.name,
+        patient.email,
+        CURRENT_DENTIST_ID,
+        null,
+        {
+          backendJobId: uploaded.job.job_id,
+          ctScanId: uploaded.scan.id,
+        }
+      );
+
+      createdCase.status = 'AI_ANALYZED';
+      createdCase.aiAnalyzedAt = new Date().toISOString();
+
+      await generateDraft(uploaded.job.job_id);
+
       setUploadStatus('complete');
       setRefreshKey(prev => prev + 1);
+
+      addNotification({
+        userId: CURRENT_DENTIST_ID,
+        userRole: 'dentist',
+        type: 'case',
+        title: 'Scan Uploaded',
+        message: 'Scan uploaded successfully. Draft report is ready for review.',
+        actionUrl: 'dentist-inbox'
+      });
 
       setTimeout(() => {
         setUploadedFile(null);
@@ -415,10 +576,11 @@ const DentistDashboard = () => {
         setSelectedPatientForUpload('');
         setActiveView('dentist-inbox');
       }, 2000);
-    } else {
+    } catch (error) {
+      console.error(error);
       setUploadStatus('error');
     }
-  }, [uploadedFile, uploadPreview, selectedPatientForUpload, myPatients]);
+  }, [uploadedFile, selectedPatientForUpload, myPatients]);
 
   // Clear upload
   const clearUpload = useCallback(() => {
@@ -433,17 +595,31 @@ const DentistDashboard = () => {
 
   // Calculate stats
   const totalPatients = myPatients.length;
-  const highRiskAlerts = dentistCases.filter(c => c.aiFindings.some(f => f.urgency === 'high') && c.status !== 'SENT_TO_PATIENT').length;
-  const casesThisMonth = dentistCases.filter(c => {
+  const highRiskAlerts = resolvedDentistCases.filter(c => c.aiFindings.some(f => f.urgency === 'high') && c.status !== 'SENT_TO_PATIENT').length;
+  const casesThisMonth = resolvedDentistCases.filter(c => {
     const caseDate = new Date(c.uploadedAt);
     const now = new Date();
     return caseDate.getMonth() === now.getMonth() && caseDate.getFullYear() === now.getFullYear();
   }).length;
 
   // Case filtering
-  const newUploads = dentistCases.filter(c => c.status === 'AI_ANALYZED' || c.status === 'UPLOADED');
-  const needsReview = dentistCases.filter(c => c.status === 'NEEDS_REVIEW');
-  const finalized = dentistCases.filter(c => c.status === 'FINALIZED' || c.status === 'SENT_TO_PATIENT');
+  const newUploads = resolvedDentistCases.filter(c => c.status === 'AI_ANALYZED' || c.status === 'UPLOADED');
+  const needsReview = resolvedDentistCases.filter(c => c.status === 'NEEDS_REVIEW');
+  const finalized = resolvedDentistCases.filter(c => c.status === 'FINALIZED' || c.status === 'SENT_TO_PATIENT');
+
+  // Centralized backend status mapping so counts and tabs always use identical logic.
+  const backendJobsByInboxTab: Record<InboxTab, AIJobDto[]> = {
+    'new-uploads': [],
+    'needs-review': [],
+    finalized: [],
+  };
+  for (const job of backendJobs) {
+    backendJobsByInboxTab[mapBackendStatusToInboxTab(job.status)].push(job);
+  }
+
+  const backendNewUploads = backendJobsByInboxTab['new-uploads'];
+  const backendNeedsReview = backendJobsByInboxTab['needs-review'];
+  const backendFinalized = backendJobsByInboxTab.finalized;
 
   const getCurrentTabCases = () => {
     switch (activeInboxTab) {
@@ -451,6 +627,15 @@ const DentistDashboard = () => {
       case 'needs-review': return needsReview;
       case 'finalized': return finalized;
       default: return newUploads;
+    }
+  };
+
+  const getCurrentTabJobs = () => {
+    switch (activeInboxTab) {
+      case 'new-uploads': return backendNewUploads;
+      case 'needs-review': return backendNeedsReview;
+      case 'finalized': return backendFinalized;
+      default: return backendNewUploads;
     }
   };
 
@@ -517,14 +702,75 @@ const DentistDashboard = () => {
 
   // Handle review case
   const handleReviewCase = (caseItem: Case) => {
-    setSelectedCase(caseItem);
+    const resolvedCase = caseItem.backendJobId ? resolvedDentistCases.find(c => c.id === caseItem.id) || caseItem : caseItem;
+    setSelectedCase(resolvedCase);
     setShowReviewModal(true);
   };
 
   // Handle send to patient
-  const handleSendToPatient = (caseId: string) => {
-    console.log('Sending case to patient:', caseId);
-    // In a real app, this would update the database
+  const handleMarkReviewed = async (caseId: string, dentistNotes: string) => {
+    const targetCase = resolvedDentistCases.find(c => c.id === caseId) || dentistCases.find(c => c.id === caseId);
+    if (!targetCase) {
+      setActionFeedback({ type: 'error', message: 'Unable to find the selected case.' });
+      setTimeout(() => setActionFeedback(null), 4000);
+      return;
+    }
+
+    try {
+      if (targetCase.backendJobId) {
+        await reviewJob(targetCase.backendJobId, 'reviewed', dentistNotes);
+      }
+
+      const caseRecord = (database.cases as Case[]).find(c => c.id === caseId);
+      if (caseRecord) {
+        caseRecord.status = 'FINALIZED';
+        caseRecord.reviewedAt = new Date().toISOString();
+        caseRecord.patientExplanation = dentistNotes || caseRecord.patientExplanation;
+      }
+
+      setShowReviewModal(false);
+      setSelectedCase(null);
+      setRefreshKey(prev => prev + 1);
+      setActionFeedback({ type: 'success', message: 'Review saved and synced with backend.' });
+      setTimeout(() => setActionFeedback(null), 4000);
+    } catch (error) {
+      console.error(error);
+      setActionFeedback({ type: 'error', message: 'Failed to save reviewed state in backend.' });
+      setTimeout(() => setActionFeedback(null), 4000);
+    }
+  };
+
+  const handleSendToPatient = async (caseId: string, dentistNotes: string) => {
+    const targetCase = resolvedDentistCases.find(c => c.id === caseId) || dentistCases.find(c => c.id === caseId);
+    if (!targetCase) {
+      setActionFeedback({ type: 'error', message: 'Unable to find the selected case.' });
+      setTimeout(() => setActionFeedback(null), 4000);
+      return;
+    }
+
+    try {
+      if (targetCase.backendJobId) {
+        await reviewJob(targetCase.backendJobId, 'finalized', dentistNotes || targetCase.patientExplanation || 'Finalized by dentist');
+      }
+
+      const caseRecord = (database.cases as Case[]).find(c => c.id === caseId);
+      if (caseRecord) {
+        caseRecord.status = 'SENT_TO_PATIENT';
+        caseRecord.finalizedAt = caseRecord.finalizedAt || new Date().toISOString();
+        caseRecord.sentAt = new Date().toISOString();
+        caseRecord.patientExplanation = dentistNotes || caseRecord.patientExplanation;
+      }
+
+      setShowReviewModal(false);
+      setSelectedCase(null);
+      setRefreshKey(prev => prev + 1);
+      setActionFeedback({ type: 'success', message: 'Case finalized and synced with backend.' });
+      setTimeout(() => setActionFeedback(null), 4000);
+    } catch (error) {
+      console.error(error);
+      setActionFeedback({ type: 'error', message: 'Failed to finalize case in backend.' });
+      setTimeout(() => setActionFeedback(null), 4000);
+    }
   };
 
   // Generate tooth data from cases for selected patient
@@ -1003,7 +1249,9 @@ const DentistDashboard = () => {
                 }}
               >
                 New Uploads
-                {newUploads.length > 0 && <span style={{ background: 'var(--color-bg-2)', padding: '2px 8px', borderRadius: '12px', fontSize: 'var(--font-size-xs)' }}>{newUploads.length}</span>}
+                <span style={{ background: 'var(--color-bg-2)', padding: '2px 8px', borderRadius: '12px', fontSize: 'var(--font-size-xs)' }}>
+                  {newUploads.length}/{backendNewUploads.length}
+                </span>
               </button>
               <button 
                 className={`inbox-tab ${activeInboxTab === 'needs-review' ? 'active' : ''}`}
@@ -1022,7 +1270,9 @@ const DentistDashboard = () => {
                 }}
               >
                 Needs Review
-                {needsReview.length > 0 && <span style={{ background: '#FEE2E2', color: '#B91C1C', padding: '2px 8px', borderRadius: '12px', fontSize: 'var(--font-size-xs)' }}>{needsReview.length}</span>}
+                <span style={{ background: '#FEE2E2', color: '#B91C1C', padding: '2px 8px', borderRadius: '12px', fontSize: 'var(--font-size-xs)' }}>
+                  {needsReview.length}/{backendNeedsReview.length}
+                </span>
               </button>
               <button 
                 className={`inbox-tab ${activeInboxTab === 'finalized' ? 'active' : ''}`}
@@ -1041,12 +1291,117 @@ const DentistDashboard = () => {
                 }}
               >
                 Finalized / Sent
-                {finalized.length > 0 && <span style={{ background: '#D1FAE5', color: '#047857', padding: '2px 8px', borderRadius: '12px', fontSize: 'var(--font-size-xs)' }}>{finalized.length}</span>}
+                <span style={{ background: '#D1FAE5', color: '#047857', padding: '2px 8px', borderRadius: '12px', fontSize: 'var(--font-size-xs)' }}>
+                  {finalized.length}/{backendFinalized.length}
+                </span>
               </button>
             </div>
 
             <div className="inbox-content">
-              {getCurrentTabCases().length > 0 ? (
+              <div className="card" style={{ marginBottom: 'var(--space-16)' }}>
+                <div
+                  className="card-header"
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-12)', flexWrap: 'wrap' }}
+                >
+                  <div>
+                    <h3 className="card-title" style={{ marginBottom: 'var(--space-8)' }}>Inbox Data Source</h3>
+                    <div style={{ display: 'inline-flex', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
+                      <button
+                        className="btn btn--sm"
+                        onClick={() => setInboxDataSource('mock')}
+                        style={{
+                          border: 'none',
+                          borderRadius: 'var(--radius-md) 0 0 var(--radius-md)',
+                          background: inboxDataSource === 'mock' ? 'var(--color-primary)' : 'transparent',
+                          color: inboxDataSource === 'mock' ? '#FFFFFF' : 'var(--color-text)'
+                        }}
+                      >
+                        Mock Cases
+                      </button>
+                      <button
+                        className="btn btn--sm"
+                        onClick={() => setInboxDataSource('backend')}
+                        style={{
+                          border: 'none',
+                          borderLeft: '1px solid var(--color-border)',
+                          borderRadius: '0 var(--radius-md) var(--radius-md) 0',
+                          background: inboxDataSource === 'backend' ? 'var(--color-primary)' : 'transparent',
+                          color: inboxDataSource === 'backend' ? '#FFFFFF' : 'var(--color-text)'
+                        }}
+                      >
+                        Backend Jobs
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    className="btn btn--outline btn--sm"
+                    onClick={() => setRefreshKey(prev => prev + 1)}
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              {inboxDataSource === 'backend' ? (
+                backendJobsLoading ? (
+                  <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+                    <h3>Loading backend jobs...</h3>
+                  </div>
+                ) : backendJobsError ? (
+                  <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+                    <h3 style={{ color: '#B91C1C' }}>Unable to load backend jobs</h3>
+                    <p>{backendJobsError}</p>
+                  </div>
+                ) : getCurrentTabJobs().length > 0 ? (
+                  <div className="case-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: 'var(--space-16)' }}>
+                    {getCurrentTabJobs().map(job => (
+                      <div className="case-card card" key={job.job_id}>
+                        <div className="case-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-12)' }}>
+                          <div>
+                            <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>Backend Job</div>
+                            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
+                              {job.job_id.slice(0, 12)}...
+                            </div>
+                          </div>
+                          <span className="status-badge">{getBackendJobStatusLabel(job.status)}</span>
+                        </div>
+
+                        <div style={{ display: 'grid', gap: 'var(--space-8)', marginBottom: 'var(--space-12)' }}>
+                          <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
+                            CT Scan ID: {job.ct_scan_id}
+                          </div>
+                          <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
+                            Created: {formatDate(job.created_at)}
+                          </div>
+                          <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
+                            Fallback Mode: {job.is_fallback_mode ? 'Yes' : 'No'}
+                          </div>
+                        </div>
+
+                        <div style={{
+                          fontSize: 'var(--font-size-sm)',
+                          padding: 'var(--space-10)',
+                          background: 'var(--color-bg-1)',
+                          borderRadius: 'var(--radius-md)',
+                          color: 'var(--color-text-secondary)',
+                          minHeight: '72px'
+                        }}>
+                          {job.draft_report
+                            ? `${job.draft_report.slice(0, 140)}${job.draft_report.length > 140 ? '...' : ''}`
+                            : 'No draft text available yet for this job.'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+                    <Icon name="check-circle" />
+                    <h3>All Caught Up!</h3>
+                    <p>No backend jobs in this category.</p>
+                  </div>
+                )
+              ) : getCurrentTabCases().length > 0 ? (
                 <div className="case-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: 'var(--space-16)' }}>
                   {getCurrentTabCases().map(caseItem => (
                     <div className={`case-card card ${caseItem.aiFindings.some(f => f.urgency === 'high') ? 'has-urgent' : ''}`} key={caseItem.id} style={{
@@ -1099,7 +1454,7 @@ const DentistDashboard = () => {
                             <Icon name="eye" /> Review Case
                           </button>
                         ) : caseItem.status === 'FINALIZED' ? (
-                          <button className="btn btn--success btn--full" onClick={() => handleSendToPatient(caseItem.id)}>
+                          <button className="btn btn--success btn--full" onClick={() => void handleSendToPatient(caseItem.id, caseItem.patientExplanation || '')}>
                             <Icon name="send" /> Send to Patient
                           </button>
                         ) : (
@@ -1999,7 +2354,7 @@ const DentistDashboard = () => {
         );
 
       // ============== CLINICAL CHARTING ==============
-      case 'dentist-charting':
+      case 'dentist-charting': {
         const chartingPatient = myPatients.find(p => p.id === selectedChartingPatient);
         const patientToothData = selectedChartingPatient ? generateToothData(selectedChartingPatient) : {};
         const patientConditions = selectedChartingPatient 
@@ -2201,6 +2556,7 @@ const DentistDashboard = () => {
             )}
           </>
         );
+      }
 
       // ============== DENTIST MESSAGES ==============
       case 'dentist-messages':
@@ -2248,6 +2604,7 @@ const DentistDashboard = () => {
             setShowReviewModal(false);
             setSelectedCase(null);
           }}
+          onMarkReviewed={handleMarkReviewed}
           onSendToPatient={handleSendToPatient}
         />
       )}

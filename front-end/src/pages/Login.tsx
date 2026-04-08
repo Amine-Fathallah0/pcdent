@@ -17,9 +17,11 @@ const Login: React.FC = () => {
     setLoading(true);
     try {
       const response = await api.post('login/', { username, password });
-      const { token, is_dentist, user_id, full_name } = response.data;
+      const { access, refresh, is_dentist, user_id, full_name } = response.data;
       
-      localStorage.setItem('token', token);
+      localStorage.setItem('access_token', access);
+      localStorage.setItem('refresh_token', refresh);
+      localStorage.setItem('token', access);
       localStorage.setItem('user_id', user_id);
       localStorage.setItem('full_name', full_name);
       localStorage.setItem('user_role', is_dentist ? 'dentist' : 'patient');

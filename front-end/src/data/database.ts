@@ -30,6 +30,8 @@ export interface Finding {
 
 export interface Case {
   id: string;
+  backendJobId?: string | null;
+  ctScanId?: number | null;
   patientId: string;
   patientEmail: string;
   patientName: string;
@@ -1150,7 +1152,6 @@ export const getDayName = (dateString: string): string => {
 };
 
 export const getRelativeDate = (dateString: string): string => {
-  const date = new Date(dateString);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
@@ -1227,10 +1228,16 @@ export const createCase = (
   patientName: string,
   patientEmail: string,
   dentistId: string,
-  imageUrl: string | null
+  imageUrl: string | null,
+  backendLink?: {
+    backendJobId?: string | null;
+    ctScanId?: number | null;
+  }
 ): Case => {
   const newCase: Case = {
     id: `case-${Date.now()}`,
+    backendJobId: backendLink?.backendJobId ?? null,
+    ctScanId: backendLink?.ctScanId ?? null,
     patientId,
     patientEmail,
     patientName,
@@ -1251,7 +1258,7 @@ export const createCase = (
     report: null
   };
 
-  database.cases.push(newCase);
+  (database.cases as Case[]).push(newCase);
   return newCase;
 };
 
@@ -1262,7 +1269,7 @@ export const simulateAIAnalysis = (caseId: string): Promise<Case | null> => {
     const processingTime = Math.floor(Math.random() * 2000) + 2000;
     
     setTimeout(() => {
-      const caseItem = database.cases.find(c => c.id === caseId);
+      const caseItem = (database.cases as Case[]).find(c => c.id === caseId);
       if (!caseItem) {
         resolve(null);
         return;
@@ -1290,7 +1297,7 @@ export const simulateAIAnalysis = (caseId: string): Promise<Case | null> => {
 
 // Update case status
 export const updateCaseStatus = (caseId: string, status: Case['status']): Case | null => {
-  const caseItem = database.cases.find(c => c.id === caseId);
+  const caseItem = (database.cases as Case[]).find(c => c.id === caseId);
   if (!caseItem) return null;
   
   caseItem.status = status;
