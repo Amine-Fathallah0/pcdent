@@ -10,24 +10,66 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 from importlib.util import find_spec
 from datetime import timedelta
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def load_dotenv_file(path):
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding='utf-8').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        # Keep explicit shell/session env vars as highest priority.
+        os.environ.setdefault(key, value)
+
+
+load_dotenv_file(BASE_DIR / '.env')
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
+def get_env(name, default=None, required=False):
+    value = os.getenv(name, default)
+    if required and (value is None or str(value).strip() == ''):
+        raise ImproperlyConfigured(f"Missing required environment variable: {name}")
+    return value
+
+
+def get_env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def get_env_list(name, default=''):
+    raw = os.getenv(name, default)
+    if raw is None:
+        return []
+    return [item.strip() for item in str(raw).split(',') if item.strip()]
+
+
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-9+f9o3(*_wo*ghw0bn#+o0u@u4#70$9vw@cfz6&fhc_v=k)4!r'
+SECRET_KEY = get_env('SECRET_KEY', required=True)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = get_env_bool('DEBUG', default=False)
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+ALLOWED_HOSTS = get_env_list('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+if not ALLOWED_HOSTS:
+    raise ImproperlyConfigured('ALLOWED_HOSTS must not be empty.')
 
 
 # Application definition
@@ -42,6 +84,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'dentapp',
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
 ]
 
 if find_spec('mcp_server'):
@@ -54,23 +97,28 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'login': get_env('THROTTLE_LOGIN_RATE', '5/min'),
+        'register': get_env('THROTTLE_REGISTER_RATE', '10/hour'),
+    },
 }
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
-    'ROTATE_REFRESH_TOKENS': False,
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=int(get_env('JWT_ACCESS_MINUTES', '5'))),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=int(get_env('JWT_REFRESH_DAYS', '1'))),
+    'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'USER_ID_FIELD': 'user_id',
     'USER_ID_CLAIM': 'user_id',
 }
 
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-]
+CORS_ALLOWED_ORIGINS = get_env_list(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173'
+)
 
 CORS_ALLOW_CREDENTIALS = True
 # Custom user model
@@ -78,6 +126,7 @@ AUTH_USER_MODEL = 'dentapp.User'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'dentapp.middleware.SecurityHeadersMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -113,15 +162,51 @@ WSGI_APPLICATION = 'mysite.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',  
-        'NAME': 'Dentapp',  # Replace with your database namepy
-        'USER': 'postgres',  # Replace with your database user
-        'PASSWORD': 'amine',  # Replace with your database password
-        'HOST': 'localhost',  # Replace with your database host
-        'PORT': '5432',  # Default PostgreSQL port
-
-
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': get_env('DB_NAME', required=True),
+        'USER': get_env('DB_USER', required=True),
+        'PASSWORD': get_env('DB_PASSWORD', required=True),
+        'HOST': get_env('DB_HOST', required=True),
+        'PORT': get_env('DB_PORT', required=True),
     }
+}
+
+# HTTPS and cookie hardening (typically enabled in production via env vars)
+SECURE_SSL_REDIRECT = get_env_bool('SECURE_SSL_REDIRECT', default=not DEBUG)
+SECURE_HSTS_SECONDS = int(get_env('SECURE_HSTS_SECONDS', '31536000' if not DEBUG else '0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = get_env_bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=not DEBUG)
+SECURE_HSTS_PRELOAD = get_env_bool('SECURE_HSTS_PRELOAD', default=not DEBUG)
+SESSION_COOKIE_SECURE = get_env_bool('SESSION_COOKIE_SECURE', default=not DEBUG)
+CSRF_COOKIE_SECURE = get_env_bool('CSRF_COOKIE_SECURE', default=not DEBUG)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+
+# Centralized audit logging for auth and security events
+LOG_DIR = BASE_DIR / 'logs'
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+        },
+    },
+    'handlers': {
+        'security_audit_file': {
+            'class': 'logging.FileHandler',
+            'filename': str(LOG_DIR / 'security_audit.log'),
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'security.audit': {
+            'handlers': ['security_audit_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
 }
 
 # Password validation

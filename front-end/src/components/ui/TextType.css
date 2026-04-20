@@ -1,0 +1,36 @@
+.text-type {
+  display: inline;
+}
+
+.text-type__content {
+  white-space: pre-wrap;
+}
+
+.text-type__cursor {
+  display: inline-block;
+  margin-left: 0.06em;
+  line-height: 1;
+  font-weight: 500;
+  transform: translateY(0.02em);
+  animation-name: text-type-cursor-flicker;
+  animation-duration: var(--text-type-cursor-blink-duration, 0.5s);
+  animation-timing-function: steps(1, end);
+  animation-iteration-count: infinite;
+}
+
+.text-type__cursor--hidden {
+  opacity: 0;
+  animation-play-state: paused;
+}
+
+@keyframes text-type-cursor-flicker {
+  0%,
+  42% {
+    opacity: 1;
+  }
+
+  43%,
+  100% {
+    opacity: 0;
+  }
+}

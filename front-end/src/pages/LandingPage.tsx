@@ -1,9 +1,22 @@
 import { Link } from 'react-router-dom';
+import { useTheme } from 'next-themes';
+import { Activity, UserRound } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import TextType from '../components/ui/TextType';
+import CountUp from '../components/ui/CountUp';
+import ThemeToggle from '../components/auth/ThemeToggle';
+import FloatingImageBackground from '../components/auth/FloatingImageBackground';
+import LiveSystemSnapshot from '../components/auth/LiveSystemSnapshot';
+import { getFloatingAssetsByTheme } from '../components/auth/floatingImageAssets';
 
 const LandingPage = () => {
+  const { resolvedTheme } = useTheme();
+  const backgroundAssets = getFloatingAssetsByTheme(resolvedTheme);
+  const brandLogo = resolvedTheme === 'dark' ? '/dentalyze/light.png' : '/dentalyze/dark.png';
+
   return (
     <div id="landing-page" className="landing-page">
+      <FloatingImageBackground imageUrls={backgroundAssets} cursorStrength={30} />
       <div className="landing-orbs" aria-hidden="true">
         <span className="orb orb-1" />
         <span className="orb orb-2" />
@@ -12,14 +25,12 @@ const LandingPage = () => {
       <div className="landing-container">
         <header className="landing-nav reveal">
           <div className="landing-brand">
-            <div className="landing-logo">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 2C8 2 5 5 5 9c0 2 1 4 2 5v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-6c1-1 2-3 2-5 0-4-3-7-7-7z" />
-              </svg>
+            <div className="landing-logo-shell">
+              <img className="landing-logo" src={brandLogo} alt="Dentalyze" />
             </div>
-            <h1 className="landing-title">Dental AI Assistant</h1>
           </div>
           <div className="flex gap-3">
+            <ThemeToggle />
             <Link to="/login">
               <Button variant="outline">Login</Button>
             </Link>
@@ -32,14 +43,24 @@ const LandingPage = () => {
         <section className="landing-hero">
           <div className="hero-copy reveal delay-1">
             <span className="hero-badge">AI guided care</span>
-            <h2 className="hero-title">Smarter dental care, from first scan to follow-up.</h2>
+            <TextType
+              as="h2"
+              className="hero-title"
+              text="Smarter dental care, from first scan to follow-up."
+              typingSpeed={42}
+              initialDelay={250}
+              loop={false}
+              startOnVisible
+            />
             <p className="landing-subtitle">
               A unified platform for clinicians and patients. Track diagnostics, manage visits, and
               unlock AI-driven insight with confidence.
             </p>
             <div className="hero-metrics">
               <div className="metric-card">
-                <div className="metric-value">45s</div>
+                <div className="metric-value">
+                  <CountUp from={120} to={45} direction="down" duration={2.2} />s
+                </div>
                 <div className="metric-label">Average case setup</div>
               </div>
               <div className="metric-card">
@@ -56,20 +77,7 @@ const LandingPage = () => {
           <div className="hero-panel reveal delay-2">
             <div className="panel-label">Live system snapshot</div>
             <div className="panel-grid">
-              <div className="panel-card">
-                <div className="panel-card-title">AI scan analysis</div>
-                <p>Auto-triage, anomaly detection, and instant summaries.</p>
-              </div>
-              <div className="panel-card">
-                <div className="panel-status">
-                  <span>Clinician queue</span>
-                  <span className="status-pill">Healthy</span>
-                </div>
-              </div>
-              <div className="panel-card">
-                <div className="panel-card-title">Patient readiness</div>
-                <p>Share results, schedule visits, and manage reminders.</p>
-              </div>
+              <LiveSystemSnapshot />
             </div>
           </div>
         </section>
@@ -84,10 +92,7 @@ const LandingPage = () => {
           <div className="role-selection">
             <Link to="/patient" className="role-card reveal delay-1">
               <div className="role-icon patient-icon">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                  <circle cx="12" cy="7" r="4" />
-                </svg>
+                <UserRound size={30} strokeWidth={1.75} aria-hidden="true" />
               </div>
               <span className="role-tag">Patients</span>
               <h3>Patient Portal</h3>
@@ -95,26 +100,11 @@ const LandingPage = () => {
             </Link>
             <Link to="/dentist" className="role-card reveal delay-2">
               <div className="role-icon dentist-icon">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                </svg>
+                <Activity size={30} strokeWidth={1.75} aria-hidden="true" />
               </div>
               <span className="role-tag">Clinicians</span>
               <h3>Clinician Dashboard</h3>
               <p>Coordinate appointments, review AI insights, and manage patient care.</p>
-            </Link>
-            <Link to="/admin" className="role-card reveal delay-3">
-              <div className="role-icon admin-icon">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="3" y="3" width="7" height="7" />
-                  <rect x="14" y="3" width="7" height="7" />
-                  <rect x="14" y="14" width="7" height="7" />
-                  <rect x="3" y="14" width="7" height="7" />
-                </svg>
-              </div>
-              <span className="role-tag">Operations</span>
-              <h3>Admin & Analytics</h3>
-              <p>Monitor performance, understand clinic metrics, and optimize workflows.</p>
             </Link>
           </div>
         </section>

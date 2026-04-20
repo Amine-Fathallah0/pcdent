@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import NotificationCenter from '../notifications/NotificationCenter';
 import api from '../../lib/api';
+import ThemeToggle from '../auth/ThemeToggle';
 
 interface DashboardLayoutProps {
   role: 'patient' | 'dentist' | 'admin';
@@ -14,6 +15,22 @@ interface DashboardLayoutProps {
 
 const DashboardLayout = ({ role, userName = 'User', userId = '', children, activeView, onViewChange }: DashboardLayoutProps) => {
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const lockState = { dashboardLock: true };
+
+    // Create a history barrier so browser Back does not leave the dashboard route.
+    window.history.pushState(lockState, '', window.location.href);
+
+    const handlePopState = () => {
+      window.history.pushState(lockState, '', window.location.href);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
 
   const clearLocalAuth = () => {
     localStorage.removeItem('access_token');
@@ -107,6 +124,7 @@ const DashboardLayout = ({ role, userName = 'User', userId = '', children, activ
             </svg>
             <span>Encrypted</span>
           </div>
+          <ThemeToggle />
           {userId && (
             <NotificationCenter 
               userId={userId} 

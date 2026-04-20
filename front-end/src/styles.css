@@ -1,3 +1,5 @@
+@import "@heroui/styles";
+
 :root {
     /* Primitive Color Tokens */
     --color-white: rgba(255, 255, 255, 1);
@@ -762,8 +764,6 @@ select.form-control {
     border: 1px solid var(--color-border-secondary);
 }
 
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Sora:wght@400;600;700&display=swap');
-
 @font-face {
     font-family: 'FKGroteskNeue';
     src: url('https://r2cdn.perplexity.ai/fonts/FKGroteskNeue.woff2') format('woff2');
@@ -1006,18 +1006,22 @@ body {
 .landing-brand {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 10px;
+}
+
+.landing-logo-shell {
+    width: clamp(155px, 19vw, 255px);
+    height: 60px;
+    overflow: hidden;
+    border-radius: 12px;
 }
 
 .landing-logo {
-    width: 54px;
-    height: 54px;
-    border-radius: 16px;
-    background: linear-gradient(135deg, #0ea5a4, #0f766e);
-    display: grid;
-    place-items: center;
-    color: white;
-    box-shadow: 0 14px 28px rgba(14, 165, 164, 0.3);
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
 }
 
 .landing-title {
@@ -1097,6 +1101,9 @@ body {
     font-size: 20px;
     font-weight: 700;
     color: #0f172a;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 1px;
 }
 
 .metric-label {
@@ -1138,6 +1145,253 @@ body {
     position: relative;
     display: grid;
     gap: 14px;
+}
+
+.snapshot-flip {
+    display: grid;
+    gap: 10px;
+}
+
+.snapshot-flip-controls {
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    width: fit-content;
+}
+
+.snapshot-flip-tab {
+    border: 1px solid rgba(15, 23, 42, 0.15);
+    background: rgba(255, 255, 255, 0.78);
+    color: rgba(15, 23, 42, 0.72);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+}
+
+.snapshot-flip-tab--active {
+    color: #0f172a;
+    border-color: rgba(2, 132, 199, 0.45);
+    box-shadow: 0 6px 14px rgba(2, 132, 199, 0.16);
+}
+
+.snapshot-flip-stage {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+    perspective: 1200px;
+    min-height: 410px;
+    border-radius: 22px;
+    overflow: hidden;
+}
+
+.snapshot-flip-card {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform-style: preserve-3d;
+    transition: transform 560ms cubic-bezier(0.2, 0.72, 0.2, 1);
+}
+
+.snapshot-flip--dentist .snapshot-flip-card {
+    transform: rotateY(180deg);
+}
+
+.snapshot-flip-face {
+    position: absolute;
+    inset: 0;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 160ms ease;
+}
+
+.snapshot-flip-face--dentist {
+    transform: rotateY(180deg);
+}
+
+.snapshot-flip:not(.snapshot-flip--dentist) .snapshot-flip-face--patient {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.snapshot-flip--dentist .snapshot-flip-face--dentist {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.snapshot-flip-hint {
+    margin: 0;
+    font-size: 11px;
+    color: rgba(15, 23, 42, 0.58);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .snapshot-flip-card {
+        transition: none;
+    }
+}
+
+.snapshot-lane {
+    position: relative;
+    overflow: hidden;
+    --snapshot-accent: 14, 165, 164;
+    --snapshot-accent-strong: 2, 132, 199;
+    border: 1px solid rgba(var(--snapshot-accent), 0.24);
+}
+
+.snapshot-lane--patient {
+    --snapshot-accent: 14, 165, 164;
+    --snapshot-accent-strong: 2, 132, 199;
+}
+
+.snapshot-lane--dentist {
+    --snapshot-accent: 2, 132, 199;
+    --snapshot-accent-strong: 245, 158, 11;
+}
+
+.snapshot-lane::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(150deg, rgba(var(--snapshot-accent), 0.16), rgba(var(--snapshot-accent-strong), 0.06) 52%, transparent 78%);
+    opacity: 0.9;
+    pointer-events: none;
+}
+
+.snapshot-lane-head,
+.snapshot-lane-steps,
+.snapshot-lane-meta {
+    position: relative;
+    z-index: 1;
+}
+
+.snapshot-lane-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.snapshot-lane-head-badge {
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: rgba(15, 23, 42, 0.86);
+    background: rgba(var(--snapshot-accent), 0.2);
+    border: 1px solid rgba(var(--snapshot-accent), 0.32);
+}
+
+.snapshot-lane-kicker {
+    margin: 0;
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: rgba(15, 23, 42, 0.52);
+    font-weight: 600;
+}
+
+.snapshot-lane-title {
+    margin: 4px 0 0;
+    font-size: 15px;
+    color: #0f172a;
+}
+
+.snapshot-lane-steps {
+    display: grid;
+    gap: 9px;
+}
+
+.snapshot-lane-step {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr);
+    gap: 9px;
+    opacity: 0.52;
+    transform: translateY(4px);
+    transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.snapshot-lane-step--reached {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.snapshot-lane-dot {
+    width: 8px;
+    height: 8px;
+    margin-top: 6px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.35);
+    border: 2px solid rgba(255, 255, 255, 0.88);
+    box-shadow: 0 0 0 4px rgba(var(--snapshot-accent), 0.14);
+}
+
+.snapshot-lane-step--typing .snapshot-lane-dot {
+    background: rgba(var(--snapshot-accent-strong), 1);
+    box-shadow: 0 0 0 6px rgba(var(--snapshot-accent-strong), 0.18);
+}
+
+.snapshot-lane-step-label {
+    margin: 0 0 4px;
+    font-size: 10px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: rgba(15, 23, 42, 0.55);
+    font-weight: 600;
+}
+
+.snapshot-lane-step--reached .snapshot-lane-step-label {
+    color: rgba(15, 23, 42, 0.72);
+}
+
+.snapshot-lane .snapshot-lane-step-text {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.35;
+    color: rgba(15, 23, 42, 0.82);
+}
+
+.snapshot-lane-step:not(.snapshot-lane-step--reached) .snapshot-lane-step-text {
+    opacity: 0.72;
+}
+
+@media (max-width: 980px) {
+    .snapshot-flip-stage {
+        min-height: 420px;
+    }
+}
+
+.snapshot-lane-meta {
+    position: relative;
+    z-index: 1;
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.snapshot-lane-meta-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    color: rgba(15, 23, 42, 0.76);
+    background: rgba(var(--snapshot-accent), 0.14);
+    border: 1px solid rgba(var(--snapshot-accent), 0.24);
 }
 
 .panel-card {
@@ -1243,27 +1497,25 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 68px;
-    height: 68px;
-    border-radius: 22px;
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
     margin-bottom: 16px;
     position: relative;
     z-index: 1;
+    border: 1px solid transparent;
 }
 
 .patient-icon {
-    background: rgba(14, 165, 164, 0.15);
+    background: linear-gradient(160deg, rgba(14, 165, 164, 0.22), rgba(14, 165, 164, 0.08));
     color: #0f766e;
+    border-color: rgba(15, 118, 110, 0.18);
 }
 
 .dentist-icon {
-    background: rgba(2, 132, 199, 0.15);
+    background: linear-gradient(160deg, rgba(2, 132, 199, 0.22), rgba(2, 132, 199, 0.08));
     color: #0369a1;
-}
-
-.admin-icon {
-    background: rgba(245, 158, 11, 0.18);
-    color: #b45309;
+    border-color: rgba(3, 105, 161, 0.18);
 }
 
 .role-tag {
@@ -4250,6 +4502,13 @@ button,
     .landing-nav {
         gap: 16px;
     }
+    .landing-logo-shell {
+        width: clamp(146px, 36vw, 188px);
+        height: 48px;
+    }
+    .landing-logo {
+        object-position: center;
+    }
     .landing-title {
         font-size: 22px;
     }
@@ -4341,6 +4600,235 @@ button,
 .charting-title p {
     color: var(--color-text-secondary);
     font-size: var(--font-size-sm);
+}
+
+/* Force theme tokens late in cascade so duplicated light :root blocks do not override dark mode. */
+html.dark,
+html[data-color-scheme="dark"] {
+    --color-background: var(--color-charcoal-700);
+    --color-surface: var(--color-charcoal-800);
+    --color-text: var(--color-gray-200);
+    --color-text-secondary: rgba(167, 169, 169, 0.75);
+    --color-primary: var(--color-teal-300);
+    --color-primary-hover: var(--color-teal-400);
+    --color-primary-active: var(--color-teal-800);
+    --color-secondary: rgba(119, 124, 124, 0.15);
+    --color-secondary-hover: rgba(119, 124, 124, 0.25);
+    --color-secondary-active: rgba(119, 124, 124, 0.3);
+    --color-border: rgba(119, 124, 124, 0.35);
+    --color-card-border: rgba(119, 124, 124, 0.2);
+    --color-card-border-inner: rgba(119, 124, 124, 0.2);
+    --color-error: var(--color-red-400);
+    --color-success: var(--color-teal-300);
+    --color-warning: var(--color-orange-400);
+    --color-info: var(--color-gray-300);
+    --color-focus-ring: rgba(50, 184, 198, 0.4);
+    --color-btn-primary-text: var(--color-slate-900);
+    --color-border-secondary: rgba(119, 124, 124, 0.28);
+}
+
+html.dark .landing-page,
+html[data-color-scheme="dark"] .landing-page {
+    background:
+        radial-gradient(1000px circle at 10% 10%, rgba(20, 184, 166, 0.18), transparent 60%),
+        radial-gradient(900px circle at 90% 0%, rgba(251, 146, 60, 0.18), transparent 55%),
+        linear-gradient(135deg, #0b1221 0%, #0b1a2e 45%, #1f1728 100%);
+}
+
+html.dark .landing-page::after,
+html[data-color-scheme="dark"] .landing-page::after {
+    background-image:
+        linear-gradient(120deg, rgba(226, 232, 240, 0.05), transparent 45%),
+        repeating-linear-gradient(0deg, rgba(226, 232, 240, 0.05) 0, rgba(226, 232, 240, 0.05) 1px, transparent 1px, transparent 7px);
+}
+
+html.dark .landing-nav,
+html[data-color-scheme="dark"] .landing-nav,
+html.dark .metric-card,
+html[data-color-scheme="dark"] .metric-card,
+html.dark .hero-panel,
+html[data-color-scheme="dark"] .hero-panel,
+html.dark .role-card,
+html[data-color-scheme="dark"] .role-card,
+html.dark .panel-card,
+html[data-color-scheme="dark"] .panel-card {
+    background: rgba(15, 23, 42, 0.72);
+    border-color: rgba(148, 163, 184, 0.25);
+    box-shadow: 0 20px 45px rgba(2, 6, 23, 0.4);
+}
+
+html.dark .landing-title,
+html[data-color-scheme="dark"] .landing-title,
+html.dark .hero-title,
+html[data-color-scheme="dark"] .hero-title,
+html.dark .section-title,
+html[data-color-scheme="dark"] .section-title,
+html.dark .role-card h3,
+html[data-color-scheme="dark"] .role-card h3,
+html.dark .panel-card-title,
+html[data-color-scheme="dark"] .panel-card-title,
+html.dark .cta-panel h2,
+html[data-color-scheme="dark"] .cta-panel h2,
+html.dark .metric-value,
+html[data-color-scheme="dark"] .metric-value {
+    color: #e2e8f0;
+}
+
+html.dark .landing-subtitle,
+html[data-color-scheme="dark"] .landing-subtitle,
+html.dark .section-subtitle,
+html[data-color-scheme="dark"] .section-subtitle,
+html.dark .role-card p,
+html[data-color-scheme="dark"] .role-card p,
+html.dark .panel-card p,
+html[data-color-scheme="dark"] .panel-card p,
+html.dark .panel-status,
+html[data-color-scheme="dark"] .panel-status,
+html.dark .panel-label,
+html[data-color-scheme="dark"] .panel-label,
+html.dark .metric-label,
+html[data-color-scheme="dark"] .metric-label,
+html.dark .cta-panel p,
+html[data-color-scheme="dark"] .cta-panel p {
+    color: rgba(226, 232, 240, 0.75);
+}
+
+html.dark .snapshot-lane-kicker,
+html[data-color-scheme="dark"] .snapshot-lane-kicker,
+html.dark .snapshot-lane-step-label,
+html[data-color-scheme="dark"] .snapshot-lane-step-label {
+    color: rgba(226, 232, 240, 0.62);
+}
+
+html.dark .snapshot-lane-head-badge,
+html[data-color-scheme="dark"] .snapshot-lane-head-badge {
+    color: rgba(226, 232, 240, 0.92);
+    background: rgba(var(--snapshot-accent), 0.24);
+    border-color: rgba(var(--snapshot-accent), 0.4);
+}
+
+html.dark .snapshot-lane-title,
+html[data-color-scheme="dark"] .snapshot-lane-title,
+html.dark .snapshot-lane-step-text,
+html[data-color-scheme="dark"] .snapshot-lane-step-text {
+    color: rgba(226, 232, 240, 0.9);
+}
+
+html.dark .snapshot-lane-dot,
+html[data-color-scheme="dark"] .snapshot-lane-dot {
+    background: rgba(148, 163, 184, 0.45);
+    border-color: rgba(15, 23, 42, 0.8);
+}
+
+html.dark .snapshot-lane-meta-chip,
+html[data-color-scheme="dark"] .snapshot-lane-meta-chip {
+    color: rgba(226, 232, 240, 0.86);
+    background: rgba(var(--snapshot-accent), 0.2);
+    border-color: rgba(var(--snapshot-accent), 0.36);
+}
+
+html.dark .role-tag,
+html[data-color-scheme="dark"] .role-tag {
+    background: rgba(148, 163, 184, 0.2);
+    color: rgba(226, 232, 240, 0.85);
+}
+
+html.dark .cta-panel,
+html[data-color-scheme="dark"] .cta-panel {
+    background: linear-gradient(135deg, rgba(20, 184, 166, 0.22), rgba(37, 99, 235, 0.2));
+    border-color: rgba(45, 212, 191, 0.35);
+}
+
+/* Simple theme transition setup */
+html.theme-transitioning,
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+    transition:
+        background-color 220ms ease,
+        color 220ms ease,
+        border-color 220ms ease,
+        box-shadow 220ms ease,
+        fill 220ms ease,
+        stroke 220ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html.theme-transitioning,
+    html.theme-transitioning *,
+    html.theme-transitioning *::before,
+    html.theme-transitioning *::after {
+        transition: none !important;
+    }
+}
+
+.theme-toggle {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 82px;
+    height: 38px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(226, 232, 240, 0.9));
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16);
+    color: #0f172a;
+    padding: 0 9px;
+    transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease, background 150ms ease;
+    overflow: hidden;
+}
+
+.theme-toggle:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.2);
+}
+
+.theme-toggle:focus-visible {
+    outline: 2px solid rgba(14, 165, 233, 0.7);
+    outline-offset: 2px;
+}
+
+.theme-toggle__icon {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    color: rgba(15, 23, 42, 0.68);
+}
+
+.theme-toggle__icon--sun { margin-right: 3px; }
+.theme-toggle__icon--moon { margin-left: 3px; }
+
+.theme-toggle__thumb {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: linear-gradient(140deg, #f8fafc, #e2e8f0);
+    box-shadow: 0 8px 14px rgba(15, 23, 42, 0.2);
+    transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms ease;
+}
+
+.theme-toggle--dark {
+    border-color: rgba(34, 211, 238, 0.36);
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(30, 41, 59, 0.92));
+    color: #e2e8f0;
+    box-shadow: 0 12px 30px rgba(2, 6, 23, 0.38);
+}
+
+.theme-toggle--dark .theme-toggle__icon {
+    color: rgba(191, 219, 254, 0.92);
+}
+
+.theme-toggle--dark .theme-toggle__thumb {
+    transform: translateX(44px);
+    background: linear-gradient(140deg, #0ea5e9, #22d3ee);
 }
 
 .patient-selector {
@@ -6772,4 +7260,22 @@ button,
     background: linear-gradient( 90deg, var(--color-primary) 0%, rgba(59, 130, 246, 0.5) 50%, var(--color-primary) 100%);
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
+}
+
+html.dark .snapshot-flip-tab,
+html[data-color-scheme="dark"] .snapshot-flip-tab {
+    background: rgba(15, 23, 42, 0.74);
+    border-color: rgba(148, 163, 184, 0.28);
+    color: rgba(226, 232, 240, 0.84);
+}
+
+html.dark .snapshot-flip-tab--active,
+html[data-color-scheme="dark"] .snapshot-flip-tab--active {
+    border-color: rgba(56, 189, 248, 0.55);
+    box-shadow: 0 8px 16px rgba(14, 165, 233, 0.24);
+}
+
+html.dark .snapshot-flip-hint,
+html[data-color-scheme="dark"] .snapshot-flip-hint {
+    color: rgba(226, 232, 240, 0.66);
 }

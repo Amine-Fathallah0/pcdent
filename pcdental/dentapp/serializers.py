@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 from .models import AIProcessingJob, Appointment, CTScan, Dentist, DentistPatientLink, Patient, User
 
@@ -41,6 +42,11 @@ class AppointmentSerializer(serializers.ModelSerializer):
         model = Appointment
         fields = ["id", "dentist_patient_link", "patient", "dentist", "appointment_date", "status", "notes", "created_at", "updated_at"]
         read_only_fields = ["created_at", "updated_at", "patient", "dentist"]
+
+    def validate_appointment_date(self, value):
+        if value < timezone.now():
+            raise serializers.ValidationError("Appointment date cannot be in the past.")
+        return value
 
 
 class CTScanSerializer(serializers.ModelSerializer):
@@ -91,13 +97,11 @@ class JobReviewDecisionSerializer(serializers.Serializer):
     dentist_notes = serializers.CharField(required=False, allow_blank=True)
 
 
-class DentistRegistrationSerializer(serializers.Serializer):
+class BaseRegistrationSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
     email = serializers.EmailField()
     full_name = serializers.CharField(max_length=255)
     password = serializers.CharField(write_only=True, min_length=8)
-    location = serializers.CharField(max_length=100)
-    contact_number = serializers.CharField(max_length=15)
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
@@ -108,6 +112,11 @@ class DentistRegistrationSerializer(serializers.Serializer):
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Email already exists.")
         return value
+
+
+class DentistRegistrationSerializer(BaseRegistrationSerializer):
+    location = serializers.CharField(max_length=100)
+    contact_number = serializers.CharField(max_length=15)
 
     @transaction.atomic
     def create(self, validated_data):
@@ -122,24 +131,10 @@ class DentistRegistrationSerializer(serializers.Serializer):
         )
 
 
-class PatientRegistrationSerializer(serializers.Serializer):
-    username = serializers.CharField(max_length=150)
-    email = serializers.EmailField()
-    full_name = serializers.CharField(max_length=255)
-    password = serializers.CharField(write_only=True, min_length=8)
+class PatientRegistrationSerializer(BaseRegistrationSerializer):
     date_of_birth = serializers.DateField()
     contact_number = serializers.CharField(max_length=15)
     address = serializers.CharField()
-
-    def validate_username(self, value):
-        if User.objects.filter(username=value).exists():
-            raise serializers.ValidationError("Username already exists.")
-        return value
-
-    def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Email already exists.")
-        return value
 
     @transaction.atomic
     def create(self, validated_data):

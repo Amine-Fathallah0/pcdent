@@ -1,0 +1,30 @@
+.floating-images-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.floating-images-bg__item {
+  position: absolute;
+  object-fit: contain;
+  opacity: 0.42;
+  will-change: transform;
+  filter: saturate(0.98) contrast(1.05) drop-shadow(0 8px 14px rgba(0, 0, 0, 0.08));
+  transform: translate3d(0, 0, 0);
+  transition: opacity 220ms ease;
+  user-select: none;
+}
+
+@media (max-width: 768px) {
+  .floating-images-bg__item {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-images-bg__item {
+    transition: none;
+  }
+}

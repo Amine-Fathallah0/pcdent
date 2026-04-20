@@ -305,13 +305,15 @@ const CaseReviewModal = ({
 };
 
 const DentistDashboard = () => {
+  const currentDentistId = localStorage.getItem('user_id') || CURRENT_DENTIST_ID;
+  const currentDentistName = localStorage.getItem('full_name') || database.dentistProfile.name;
   const [activeView, setActiveView] = useState('dentist-dashboard');
   const [activeInboxTab, setActiveInboxTab] = useState<InboxTab>('new-uploads');
   const [inboxDataSource, setInboxDataSource] = useState<'mock' | 'backend'>('mock');
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
-  const [appointments, setAppointments] = useState<Appointment[]>(getAppointmentsByDentist(CURRENT_DENTIST_ID));
+  const [appointments, setAppointments] = useState<Appointment[]>(getAppointmentsByDentist(currentDentistId));
   const [refreshKey, setRefreshKey] = useState(0); // Force re-render for dynamic data
   const [backendJobs, setBackendJobs] = useState<AIJobDto[]>([]);
   const [backendJobsLoading, setBackendJobsLoading] = useState(false);
@@ -340,7 +342,7 @@ const DentistDashboard = () => {
   
   // Pending requests state (dynamic management)
   const [pendingRequestsState, setPendingRequestsState] = useState<AssignmentRequest[]>(
-    getPendingRequestsByDentist(CURRENT_DENTIST_ID)
+    getPendingRequestsByDentist(currentDentistId)
   );
   const [requestInfoModal, setRequestInfoModal] = useState<{ show: boolean; request: AssignmentRequest | null; message: string }>({
     show: false,
@@ -396,11 +398,11 @@ const DentistDashboard = () => {
   }, [activeView, loadJobs]);
 
   // Get dynamic data from database
-  const dentistCases = getCasesByDentist(CURRENT_DENTIST_ID);
-  const myPatients = getPatientsByDentist(CURRENT_DENTIST_ID);
+  const dentistCases = getCasesByDentist(currentDentistId);
+  const myPatients = getPatientsByDentist(currentDentistId);
   const { dentistProfile } = database;
-  const upcomingAppointments = getUpcomingAppointments(CURRENT_DENTIST_ID, 'dentist');
-  const todaysAppointments = getTodaysAppointments(CURRENT_DENTIST_ID);
+  const upcomingAppointments = getUpcomingAppointments(currentDentistId, 'dentist');
+  const todaysAppointments = getTodaysAppointments(currentDentistId);
 
   const backendJobsById = useMemo(() => {
     const map = new Map<string, AIJobDto>();
@@ -528,9 +530,34 @@ const DentistDashboard = () => {
 
     try {
       const links = await fetchMyLinks();
-      const activeLink = links[0];
+      const activeLink = links.find((link) => link.patient === patient.id) || links[0];
+
       if (!activeLink) {
-        throw new Error('No active patient links found for this dentist account.');
+        // Keep mock workflow usable when backend links are not available yet.
+        const fallbackCase = createCase(
+          patient.id,
+          patient.name,
+          patient.email,
+          currentDentistId,
+          null
+        );
+        fallbackCase.status = 'AI_ANALYZED';
+        fallbackCase.aiAnalyzedAt = new Date().toISOString();
+
+        setUploadStatus('complete');
+        setRefreshKey(prev => prev + 1);
+        setActionFeedback({ type: 'info', message: 'Saved to mock cases only (no backend dentist-patient link found).' });
+        setTimeout(() => setActionFeedback(null), 5000);
+
+        setTimeout(() => {
+          setUploadedFile(null);
+          setUploadPreview(null);
+          setUploadProgress(0);
+          setUploadStatus('idle');
+          setSelectedPatientForUpload('');
+          setActiveView('dentist-inbox');
+        }, 2000);
+        return;
       }
 
       const uploaded = await uploadCTScan(
@@ -543,7 +570,7 @@ const DentistDashboard = () => {
         patient.id,
         patient.name,
         patient.email,
-        CURRENT_DENTIST_ID,
+        currentDentistId,
         null,
         {
           backendJobId: uploaded.job.job_id,
@@ -560,7 +587,7 @@ const DentistDashboard = () => {
       setRefreshKey(prev => prev + 1);
 
       addNotification({
-        userId: CURRENT_DENTIST_ID,
+        userId: currentDentistId,
         userRole: 'dentist',
         type: 'case',
         title: 'Scan Uploaded',
@@ -580,7 +607,7 @@ const DentistDashboard = () => {
       console.error(error);
       setUploadStatus('error');
     }
-  }, [uploadedFile, selectedPatientForUpload, myPatients]);
+  }, [uploadedFile, selectedPatientForUpload, myPatients, currentDentistId]);
 
   // Clear upload
   const clearUpload = useCallback(() => {
@@ -1230,6 +1257,11 @@ const DentistDashboard = () => {
         return (
           <>
             <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Case Inbox</h2>
+            {actionFeedback && (
+              <div className={`alert ${actionFeedback.type}`} style={{ marginBottom: 'var(--space-16)' }}>
+                {actionFeedback.message}
+              </div>
+            )}
             
             <div className="inbox-tabs" style={{ display: 'flex', gap: 'var(--space-4)', marginBottom: 'var(--space-24)', borderBottom: '2px solid var(--color-border)', paddingBottom: 'var(--space-4)' }}>
               <button 
@@ -1482,6 +1514,11 @@ const DentistDashboard = () => {
         return (
           <>
             <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>New AI Analysis</h2>
+            {actionFeedback && (
+              <div className={`alert ${actionFeedback.type}`} style={{ marginBottom: 'var(--space-16)' }}>
+                {actionFeedback.message}
+              </div>
+            )}
             
             <div className="alert info" style={{ 
               display: 'flex', 
@@ -1531,7 +1568,7 @@ const DentistDashboard = () => {
               >
                 <option value="">-- Select Patient --</option>
                 {myPatients.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
+                        <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
                 ))}
               </select>
               {!selectedPatientForUpload && uploadedFile && (
@@ -2094,7 +2131,7 @@ const DentistDashboard = () => {
             <AppointmentList
               appointments={appointments}
               userRole="dentist"
-              onRefresh={() => setAppointments(getAppointmentsByDentist(CURRENT_DENTIST_ID))}
+              onRefresh={() => setAppointments(getAppointmentsByDentist(currentDentistId))}
               onScheduleNew={() => setShowScheduler(true)}
             />
           </>
@@ -2564,8 +2601,8 @@ const DentistDashboard = () => {
           <>
             <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Messages</h2>
             <MessagingSystem
-              userId={CURRENT_DENTIST_ID}
-              userName={dentistProfile.name}
+              userId={currentDentistId}
+              userName={currentDentistName}
               userRole="dentist"
             />
           </>
@@ -2575,8 +2612,8 @@ const DentistDashboard = () => {
       case 'dentist-treatment':
         return (
           <TreatmentPlanning
-            userId={CURRENT_DENTIST_ID}
-            userName={dentistProfile.name}
+            userId={currentDentistId}
+            userName={currentDentistName}
             userRole="dentist"
           />
         );
@@ -2589,8 +2626,8 @@ const DentistDashboard = () => {
   return (
     <DashboardLayout
       role="dentist"
-      userName={dentistProfile.name}
-      userId={CURRENT_DENTIST_ID}
+      userName={currentDentistName}
+      userId={currentDentistId}
       activeView={activeView}
       onViewChange={setActiveView}
     >
@@ -2612,9 +2649,9 @@ const DentistDashboard = () => {
       {/* Appointment Scheduler Modal */}
       {showScheduler && (
         <AppointmentScheduler
-          userId={CURRENT_DENTIST_ID}
+          userId={currentDentistId}
           userRole="dentist"
-          dentistId={CURRENT_DENTIST_ID}
+          dentistId={currentDentistId}
           onClose={() => setShowScheduler(false)}
           onSuccess={(appointment) => {
             setAppointments([...appointments, appointment]);

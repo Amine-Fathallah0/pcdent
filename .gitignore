@@ -6,11 +6,16 @@ __pycache__/
 *.so
 .Python
 pcd-venv/
+pcd-venv-locked-*/
 env/
 venv/
+*.egg-info/
+dist/
+build/
 
 # Django
 *.log
+logs/
 db.sqlite3
 db.sqlite3-journal
 /static/

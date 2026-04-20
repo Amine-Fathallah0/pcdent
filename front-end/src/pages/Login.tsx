@@ -1,16 +1,55 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTheme } from 'next-themes';
 import api from '../lib/api';
-import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '../components/ui/card';
+import { Button, Card, Input, Label, Spinner } from '@heroui/react';
 import { toast } from 'sonner';
+import ThemeToggle from '../components/auth/ThemeToggle';
+import FloatingImageBackground from '../components/auth/FloatingImageBackground';
+import { getFloatingAssetsByTheme } from '../components/auth/floatingImageAssets';
+import TextType from '../components/ui/TextType';
+import '../styles/auth-rework.css';
 
 const Login: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { resolvedTheme } = useTheme();
+  const backgroundAssets = getFloatingAssetsByTheme(resolvedTheme);
+  const brandLogo = resolvedTheme === 'dark' ? '/dentalyze/light.png' : '/dentalyze/dark.png';
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const role = localStorage.getItem('user_role');
+
+    if (!token) {
+      return;
+    }
+
+    if (role === 'dentist') {
+      navigate('/dentist', { replace: true });
+      return;
+    }
+
+    if (role === 'patient') {
+      navigate('/patient', { replace: true });
+      return;
+    }
+
+    if (role === 'admin') {
+      navigate('/admin', { replace: true });
+    }
+  }, [navigate]);
+
+  const getErrorMessage = (error: any, fallback: string) => {
+    const data = error?.response?.data;
+    if (!data) return fallback;
+    if (typeof data === 'string') return data;
+    if (data.detail) return data.detail;
+    if (data.username && Array.isArray(data.username)) return data.username.join(', ');
+    return fallback;
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,73 +68,150 @@ const Login: React.FC = () => {
       toast.success('Login successful!');
 
       if (is_dentist) {
-        navigate('/dentist');
+        navigate('/dentist', { replace: true });
       } else {
-        navigate('/patient');
+        navigate('/patient', { replace: true });
       }
     } catch (error: any) {
       console.error(error);
-      toast.error('Invalid credentials or server error');
+      toast.error(getErrorMessage(error, 'Invalid credentials or server error'));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="auth-page">
+    <div className="authx-page">
+      <FloatingImageBackground imageUrls={backgroundAssets} cursorStrength={28} />
       <div className="landing-orbs" aria-hidden="true">
         <span className="orb orb-1" />
         <span className="orb orb-2" />
         <span className="orb orb-3" />
       </div>
-      <div className="auth-container">
-        <Card className="auth-card">
-          <CardHeader>
-            <span className="auth-badge">Welcome back</span>
-            <CardTitle className="auth-title">Sign in to your workspace</CardTitle>
-          </CardHeader>
-          <form onSubmit={handleLogin}>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <label htmlFor="username" className="text-sm font-medium">Username</label>
-                <Input
-                  id="username"
-                  type="text"
-                  placeholder="Enter your username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  required
+      <div className="authx-grid-overlay" aria-hidden="true" />
+      <div className="authx-shell">
+        <header className="authx-topbar">
+          <div className="authx-brand">
+            <div className="authx-brand-logo-shell">
+              <img className="authx-brand-logo" src={brandLogo} alt="Dentalyze" />
+            </div>
+          </div>
+          <ThemeToggle />
+        </header>
+
+        <section className="authx-main authx-main--equal">
+          <Card className="authx-hero-card" variant="default">
+            <p className="authx-kicker">Clinical Intelligence</p>
+            <h1 className="authx-heading">Sign in and continue patient care with confidence.</h1>
+            <TextType
+              as="p"
+              className="authx-copy"
+              text="Access appointments, AI report workflows, and secure dentist-patient communication from one streamlined workspace."
+              typingSpeed={22}
+              initialDelay={120}
+              loop={false}
+              showCursor={false}
+              startOnVisible
+            />
+            <ul className="authx-feature-list">
+              <li className="authx-feature-item">
+                <span className="authx-feature-dot" />
+                <TextType
+                  as="span"
+                  text="Real-time case status tracking"
+                  typingSpeed={20}
+                  initialDelay={620}
+                  loop={false}
+                  showCursor={false}
+                  startOnVisible
                 />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="password" className="text-sm font-medium">Password</label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
+              </li>
+              <li className="authx-feature-item">
+                <span className="authx-feature-dot" />
+                <TextType
+                  as="span"
+                  text="HIPAA-minded workflow structure"
+                  typingSpeed={20}
+                  initialDelay={1020}
+                  loop={false}
+                  showCursor={false}
+                  startOnVisible
                 />
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col gap-3">
-              <Button type="submit" className="primary-cta w-full" disabled={loading}>
-                {loading ? 'Logging in...' : 'Login'}
-              </Button>
-              <Button variant="outline" type="button" onClick={() => navigate('/')} className="w-full">
-                Back to home
-              </Button>
-              <button
-                type="button"
-                onClick={() => navigate('/signup')}
-                className="auth-link"
-              >
-                New here? Create an account
-              </button>
-            </CardFooter>
-          </form>
-        </Card>
+              </li>
+              <li className="authx-feature-item">
+                <span className="authx-feature-dot" />
+                <TextType
+                  as="span"
+                  text="Secure role-based dashboards"
+                  typingSpeed={20}
+                  initialDelay={1420}
+                  loop={false}
+                  showCursor={false}
+                  startOnVisible
+                />
+              </li>
+            </ul>
+          </Card>
+
+          <Card className="authx-form-card authx-form-card--login" variant="tertiary">
+            <Card.Header>
+              <Card.Title className="authx-form-title">Welcome back</Card.Title>
+              <Card.Description className="authx-form-subtitle">
+                Enter your credentials to continue.
+              </Card.Description>
+            </Card.Header>
+            <Card.Content>
+              <form onSubmit={handleLogin} className="authx-form-grid">
+                <div className="authx-form-grid">
+                  <Label htmlFor="username">Username or Email</Label>
+                  <Input
+                    id="username"
+                    type="text"
+                    placeholder="dr.smith or dr.smith@clinic.com"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    fullWidth
+                    required
+                  />
+                </div>
+
+                <div className="authx-form-grid">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    fullWidth
+                    required
+                  />
+                </div>
+
+                <div className="authx-cta">
+                  <Button type="submit" fullWidth isDisabled={loading}>
+                    {loading ? (
+                      <>
+                        <Spinner color="current" size="sm" />
+                        Logging in...
+                      </>
+                    ) : (
+                      'Login'
+                    )}
+                  </Button>
+                  <div className="authx-inline-actions">
+                    <Button type="button" variant="outline" onPress={() => navigate('/')}>
+                      Back to home
+                    </Button>
+                    <button type="button" onClick={() => navigate('/signup')} className="authx-link">
+                      New here? Create account
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </Card.Content>
+          </Card>
+        </section>
       </div>
     </div>
   );

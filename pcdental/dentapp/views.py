@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework import generics, permissions, status
@@ -5,8 +7,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
@@ -23,12 +27,19 @@ from .serializers import (
 )
 
 User = get_user_model()
+audit_logger = logging.getLogger('security.audit')
 
 
-def _build_auth_payload(user):
+def _client_ip(request):
+    forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded_for:
+        return forwarded_for.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
+def _build_auth_payload(user, is_dentist: bool):
     refresh = RefreshToken.for_user(user)
     access = str(refresh.access_token)
-    is_dentist = Dentist.objects.filter(dentist=user).exists()
     return {
         'refresh': str(refresh),
         'access': access,
@@ -40,21 +51,56 @@ def _build_auth_payload(user):
     }
 
 
-def _get_role_profiles(user):
-    dentist_profile = Dentist.objects.filter(dentist=user, deleted_at__isnull=True).first()
-    patient_profile = Patient.objects.filter(patient=user, deleted_at__isnull=True).first()
-    return dentist_profile, patient_profile
+def _get_role_profiles(request):
+    if not hasattr(request, '_role_profiles'):
+        user = request.user
+        request._role_profiles = (
+            Dentist.objects.filter(dentist=user, deleted_at__isnull=True).first(),
+            Patient.objects.filter(patient=user, deleted_at__isnull=True).first(),
+        )
+    return request._role_profiles
 
 
 class DentistTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
+        username_input = attrs.get('username', '')
+        if username_input and '@' in username_input:
+            user = User.objects.filter(email__iexact=username_input).first()
+            if user:
+                attrs['username'] = user.username
         data = super().validate(attrs)
-        data.update(_build_auth_payload(self.user))
+        is_dentist = Dentist.objects.filter(dentist=self.user).exists()
+        data.update(_build_auth_payload(self.user, is_dentist=is_dentist))
         return data
 
 
 class LoginView(TokenObtainPairView):
     serializer_class = DentistTokenObtainPairSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
+
+    def post(self, request, *args, **kwargs):
+        username = request.data.get('username', '')
+        try:
+            response = super().post(request, *args, **kwargs)
+        except Exception:
+            audit_logger.warning(
+                'auth.login.failed username=%s ip=%s reason=exception',
+                username,
+                _client_ip(request),
+            )
+            raise
+
+        if response.status_code == status.HTTP_200_OK:
+            audit_logger.info('auth.login.success username=%s ip=%s', username, _client_ip(request))
+        else:
+            audit_logger.warning(
+                'auth.login.failed username=%s ip=%s status=%s',
+                username,
+                _client_ip(request),
+                response.status_code,
+            )
+        return response
 
 class DentistRegistrationView(generics.CreateAPIView):
     """
@@ -63,12 +109,30 @@ class DentistRegistrationView(generics.CreateAPIView):
     queryset = Dentist.objects.all()
     serializer_class = DentistRegistrationSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'register'
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        dentist = serializer.save()
-        return Response(_build_auth_payload(dentist.dentist), status=status.HTTP_201_CREATED)
+        email = request.data.get('email', '')
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            dentist = serializer.save()
+        except Exception:
+            audit_logger.warning(
+                'auth.register.dentist.failed email=%s ip=%s',
+                email,
+                _client_ip(request),
+            )
+            raise
+
+        audit_logger.info(
+            'auth.register.dentist.success email=%s user_id=%s ip=%s',
+            dentist.dentist.email,
+            dentist.dentist.user_id,
+            _client_ip(request),
+        )
+        return Response(_build_auth_payload(dentist.dentist, is_dentist=True), status=status.HTTP_201_CREATED)
 
 class PatientRegistrationView(generics.CreateAPIView):
     """
@@ -77,12 +141,30 @@ class PatientRegistrationView(generics.CreateAPIView):
     queryset = Patient.objects.all()
     serializer_class = PatientRegistrationSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'register'
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        patient = serializer.save()
-        return Response(_build_auth_payload(patient.patient), status=status.HTTP_201_CREATED)
+        email = request.data.get('email', '')
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            patient = serializer.save()
+        except Exception:
+            audit_logger.warning(
+                'auth.register.patient.failed email=%s ip=%s',
+                email,
+                _client_ip(request),
+            )
+            raise
+
+        audit_logger.info(
+            'auth.register.patient.success email=%s user_id=%s ip=%s',
+            patient.patient.email,
+            patient.patient.user_id,
+            _client_ip(request),
+        )
+        return Response(_build_auth_payload(patient.patient, is_dentist=False), status=status.HTTP_201_CREATED)
 
 class UserDetailView(APIView):
     """
@@ -103,13 +185,18 @@ class LogoutView(APIView):
 
     def post(self, request):
         refresh_token = request.data.get('refresh')
-        if refresh_token:
-            try:
-                token = RefreshToken(refresh_token)
-                token.blacklist()
-            except Exception:
-                # Blacklisting requires optional app support; ignore in local dev.
-                pass
+        if not refresh_token:
+            return Response({"detail": "Refresh token required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            RefreshToken(refresh_token).blacklist()
+        except (InvalidToken, TokenError):
+            audit_logger.warning(
+                'auth.logout.invalid_token user_id=%s ip=%s',
+                request.user.user_id,
+                _client_ip(request),
+            )
+            return Response({"detail": "Invalid or expired token."}, status=status.HTTP_400_BAD_REQUEST)
+        audit_logger.info('auth.logout.success user_id=%s ip=%s', request.user.user_id, _client_ip(request))
         return Response({"detail": "Logged out successfully."}, status=status.HTTP_200_OK)
 
 
@@ -118,8 +205,15 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        dentist_profile, patient_profile = _get_role_profiles(self.request.user)
-        queryset = Appointment.objects.filter(deleted_at__isnull=True)
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
+        queryset = (
+            Appointment.objects
+            .filter(deleted_at__isnull=True)
+            .select_related(
+                'dentist_patient_link__dentist__dentist',
+                'dentist_patient_link__patient__patient',
+            )
+        )
 
         if dentist_profile:
             return queryset.filter(dentist_patient_link__dentist=dentist_profile)
@@ -129,7 +223,7 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         link = serializer.validated_data['dentist_patient_link']
-        dentist_profile, patient_profile = _get_role_profiles(self.request.user)
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
         if not dentist_profile and not patient_profile:
             raise PermissionDenied('You are not linked to appointment resources.')
         if dentist_profile and link.dentist_id != dentist_profile.pk:
@@ -144,7 +238,7 @@ class DentistPatientLinkListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        dentist_profile, patient_profile = _get_role_profiles(self.request.user)
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
         queryset = DentistPatientLink.objects.filter(is_active=True)
 
         if dentist_profile:
@@ -159,13 +253,24 @@ class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        dentist_profile, patient_profile = _get_role_profiles(self.request.user)
-        queryset = Appointment.objects.filter(deleted_at__isnull=True)
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
+        queryset = (
+            Appointment.objects
+            .filter(deleted_at__isnull=True)
+            .select_related(
+                'dentist_patient_link__dentist__dentist',
+                'dentist_patient_link__patient__patient',
+            )
+        )
         if dentist_profile:
             return queryset.filter(dentist_patient_link__dentist=dentist_profile)
         if patient_profile:
             return queryset.filter(dentist_patient_link__patient=patient_profile)
         return queryset.none()
+
+    def perform_destroy(self, instance):
+        instance.deleted_at = timezone.now()
+        instance.save(update_fields=['deleted_at'])
 
 
 class CTScanListCreateView(generics.ListCreateAPIView):
@@ -174,8 +279,15 @@ class CTScanListCreateView(generics.ListCreateAPIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def get_queryset(self):
-        dentist_profile, patient_profile = _get_role_profiles(self.request.user)
-        queryset = CTScan.objects.filter(deleted_at__isnull=True)
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
+        queryset = (
+            CTScan.objects
+            .filter(deleted_at__isnull=True)
+            .select_related(
+                'dentist_patient_link__dentist__dentist',
+                'dentist_patient_link__patient__patient',
+            )
+        )
 
         if dentist_profile:
             return queryset.filter(dentist_patient_link__dentist=dentist_profile)
@@ -188,7 +300,7 @@ class CTScanListCreateView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
 
         link = serializer.validated_data['dentist_patient_link']
-        dentist_profile, patient_profile = _get_role_profiles(request.user)
+        dentist_profile, patient_profile = _get_role_profiles(request)
         if not dentist_profile and not patient_profile:
             raise PermissionDenied('You are not linked to CT scan resources.')
         if dentist_profile and link.dentist_id != dentist_profile.pk:
@@ -215,7 +327,7 @@ class AIProcessingJobListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        dentist_profile, patient_profile = _get_role_profiles(self.request.user)
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
         queryset = AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link')
 
         if dentist_profile:
@@ -231,7 +343,7 @@ class AIProcessingJobDetailView(generics.RetrieveAPIView):
     lookup_field = 'job_id'
 
     def get_queryset(self):
-        dentist_profile, patient_profile = _get_role_profiles(self.request.user)
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
         queryset = AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link')
         if dentist_profile:
             return queryset.filter(ct_scan__dentist_patient_link__dentist=dentist_profile)
@@ -248,7 +360,7 @@ class AIProcessingJobGenerateDraftView(APIView):
             AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link'),
             job_id=job_id,
         )
-        dentist_profile, patient_profile = _get_role_profiles(request.user)
+        dentist_profile, patient_profile = _get_role_profiles(request)
         link = job.ct_scan.dentist_patient_link
         if dentist_profile and link.dentist_id != dentist_profile.pk:
             raise PermissionDenied('You cannot request a draft for this job.')
@@ -257,14 +369,11 @@ class AIProcessingJobGenerateDraftView(APIView):
         if not dentist_profile and not patient_profile:
             raise PermissionDenied('Unauthorized.')
 
-        job.status = 'report_requested'
-        job.save(update_fields=['status', 'updated_at'])
-
+        job.status = 'draft_ready'
         job.draft_report = (
             'Draft report generated in fallback mode. Segmentation service is not connected yet. '
             'Dentist review is required before finalization.'
         )
-        job.status = 'draft_ready'
         job.save(update_fields=['draft_report', 'status', 'updated_at'])
 
         return Response(AIProcessingJobSerializer(job).data, status=status.HTTP_200_OK)
@@ -277,7 +386,7 @@ class AIProcessingJobReviewView(APIView):
         serializer = JobReviewDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        dentist_profile = Dentist.objects.filter(dentist=request.user, deleted_at__isnull=True).first()
+        dentist_profile, _ = _get_role_profiles(request)
         if not dentist_profile:
             raise PermissionDenied('Only dentists can review or finalize reports.')
 
