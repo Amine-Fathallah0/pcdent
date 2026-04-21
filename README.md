@@ -15,6 +15,8 @@ A full-stack MVP for managing dental clinic workflows: patient-dentist relations
 | CORS | django-cors-headers |
 | Realtime (planned) | Django Channels + WebSockets |
 
+
+
 ---
 
 ## Project Structure
