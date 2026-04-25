@@ -1,0 +1,80 @@
+.rb-scroll-list-container {
+  position: relative;
+  width: 100%;
+}
+
+.rb-scroll-list {
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 12px;
+  outline: none;
+}
+
+.rb-scroll-list:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary) 45%, transparent);
+}
+
+.rb-scroll-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rb-scroll-list::-webkit-scrollbar-track {
+  background: color-mix(in oklab, var(--color-bg-1) 88%, transparent);
+  border-radius: 999px;
+}
+
+.rb-scroll-list::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--color-border) 80%, transparent);
+  border-radius: 999px;
+}
+
+.rb-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.rb-no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.rb-animated-item {
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+}
+
+.rb-item {
+  padding: 0;
+  border-radius: 12px;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.rb-item--selected {
+  transform: translateY(-1px);
+}
+
+.rb-item-text {
+  margin: 0;
+}
+
+.rb-top-gradient {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background: linear-gradient(to bottom, var(--color-surface), transparent);
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.rb-bottom-gradient {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 66px;
+  background: linear-gradient(to top, var(--color-surface), transparent);
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}

@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import NotificationCenter from '../notifications/NotificationCenter';
+import ReminderCenter, { type ReminderEntry } from '../notifications/ReminderCenter';
 import api from '../../lib/api';
 import ThemeToggle from '../auth/ThemeToggle';
 
@@ -11,9 +12,18 @@ interface DashboardLayoutProps {
   children: ReactNode;
   activeView: string;
   onViewChange: (view: string) => void;
+  reminderItems?: ReminderEntry[];
 }
 
-const DashboardLayout = ({ role, userName = 'User', userId = '', children, activeView, onViewChange }: DashboardLayoutProps) => {
+const DashboardLayout = ({
+  role,
+  userName = 'User',
+  userId = '',
+  children,
+  activeView,
+  onViewChange,
+  reminderItems = [],
+}: DashboardLayoutProps) => {
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -71,12 +81,10 @@ const DashboardLayout = ({ role, userName = 'User', userId = '', children, activ
       case 'patient':
         return [
           { id: 'patient-dashboard', label: 'Dashboard', icon: 'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z' },
-          { id: 'patient-results', label: 'My Results', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
           { id: 'patient-appointments', label: 'Appointments', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
-          { id: 'patient-messages', label: 'Messages', icon: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z' },
-          { id: 'patient-upload', label: 'Upload Images', icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12' },
-          { id: 'patient-history', label: 'Case Timeline', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-          { id: 'patient-treatment', label: 'Treatment Plan', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' }
+          { id: 'patient-results', label: 'Records', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+          { id: 'patient-messages', label: 'Chat', icon: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z' },
+          { id: 'patient-history', label: 'Calendar', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' }
         ];
       case 'dentist':
         return [
@@ -106,41 +114,45 @@ const DashboardLayout = ({ role, userName = 'User', userId = '', children, activ
 
   return (
     <div className="main-app">
-      {/* Top Navigation */}
-      <nav className="top-nav">
-        <div className="nav-left">
-          <div className="logo-small">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 2C8 2 5 5 5 9c0 2 1 4 2 5v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-6c1-1 2-3 2-5 0-4-3-7-7-7z"/>
-            </svg>
-          </div>
-          <span className="app-title">Dental AI Assistant</span>
-        </div>
-        <div className="nav-right">
-          <div className="security-indicator">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-            <span>Encrypted</span>
-          </div>
-          <ThemeToggle />
-          {userId && (
-            <NotificationCenter 
-              userId={userId} 
-              onNavigate={onViewChange}
-            />
-          )}
-          <div className="user-info">
-            <div className={`role-badge ${role}`} id="role-badge">{getRoleLabel()}</div>
-            <span id="user-name">{userName}</span>
-          </div>
-          <button className="btn btn--secondary btn--sm" onClick={handleLogout}>Logout</button>
-        </div>
-      </nav>
-
       {/* Sidebar */}
       <aside className="sidebar" id="sidebar">
+        <div className="sidebar-header">
+          <div className="sidebar-header-top">
+            <div className="sidebar-brand">
+              <div className="logo-small">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2C8 2 5 5 5 9c0 2 1 4 2 5v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-6c1-1 2-3 2-5 0-4-3-7-7-7z" />
+                </svg>
+              </div>
+              <div className="sidebar-brand__text">
+                <p className="sidebar-brand__kicker">Dentalyze</p>
+                <p className="sidebar-brand__title">Patient Portal</p>
+              </div>
+            </div>
+
+            {userId && (
+              <div className="sidebar-alerts">
+                <div className="sidebar-bell-wrap">
+                  <NotificationCenter
+                    userId={userId}
+                    onNavigate={onViewChange}
+                  />
+                </div>
+                {role === 'patient' && (
+                  <div className="sidebar-bell-wrap">
+                    <ReminderCenter
+                      reminders={reminderItems}
+                      onNavigate={onViewChange}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+
+        </div>
+
         <nav className="sidebar-nav">
           {getSidebarItems().map(item => (
             <a
@@ -155,18 +167,55 @@ const DashboardLayout = ({ role, userName = 'User', userId = '', children, activ
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d={item.icon}/>
               </svg>
-              <span>{item.label}</span>
+              <span className="sidebar-link__label">{item.label}</span>
               {'badge' in item && item.badge && (
                 <span className="sidebar-badge">{item.badge}</span>
               )}
             </a>
           ))}
         </nav>
+
+        <div className="sidebar-footer">
+          <button className="btn btn--secondary btn--sm btn--full" onClick={handleLogout}>Logout</button>
+          <div className="sidebar-footer-controls">
+            <ThemeToggle />
+          </div>
+        </div>
       </aside>
 
       {/* Main Content */}
       <main className="main-content" id="main-content">
-        {children}
+        {/* Top Bar */}
+        <div className="dashboard-topbar">
+          <div className="dashboard-topbar__search">
+            <svg className="dashboard-topbar__search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              className="dashboard-topbar__search-input"
+              type="search"
+              placeholder="Search records, appointments…"
+              aria-label="Search"
+            />
+          </div>
+          <div className="dashboard-topbar__right">
+            <div className="dashboard-topbar__profile">
+              <div className="dashboard-topbar__avatar" aria-hidden="true">
+                {userName.charAt(0).toUpperCase()}
+              </div>
+              <div className="dashboard-topbar__info">
+                <span className="dashboard-topbar__name">{userName}</span>
+                <span className="dashboard-topbar__role">{getRoleLabel()}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable Body */}
+        <div className="dashboard-body">
+          {children}
+        </div>
       </main>
     </div>
   );

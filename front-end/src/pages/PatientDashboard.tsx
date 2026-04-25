@@ -5,6 +5,8 @@ import AppointmentScheduler from '../components/appointments/AppointmentSchedule
 import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
 import FullReportModal from '../components/FullReportModal';
+import TextType from '../components/ui/TextType';
+import AnimatedList from '../components/ui/AnimatedList';
 import { Icon } from '../components/ui';
 import { fetchJobs, fetchMyLinks, generateDraft, uploadCTScan, type AIJobDto } from '../lib/backendApi';
 import { 
@@ -83,6 +85,40 @@ const getBackendJobStatusClass = (status: AIJobDto['status']): string => {
       return 'uploaded';
   }
 };
+
+const getRecentActivityTone = (label: string): 'success' | 'warning' | 'info' => {
+  const value = label.toLowerCase();
+
+  if (value.includes('failed') || value.includes('review')) {
+    return 'warning';
+  }
+
+  if (value.includes('finalized') || value.includes('reviewed') || value.includes('sent')) {
+    return 'success';
+  }
+
+  return 'info';
+};
+
+interface DashboardActionButtonProps {
+  icon: string;
+  title: string;
+  description: string;
+  onClick: () => void;
+}
+
+const DashboardActionButton = ({ icon, title, description, onClick }: DashboardActionButtonProps) => (
+  <button className="patient-action-btn" onClick={onClick}>
+    <span className="patient-action-btn__icon" aria-hidden="true">
+      <Icon name={icon} />
+    </span>
+    <span className="patient-action-btn__content">
+      <span className="patient-action-btn__title">{title}</span>
+      <span className="patient-action-btn__desc">{description}</span>
+    </span>
+    <Icon name="chevron-right" size={16} />
+  </button>
+);
 
 const PatientDashboard = () => {
   const [activeView, setActiveView] = useState('patient-dashboard');
@@ -189,9 +225,56 @@ const PatientDashboard = () => {
     activeTreatments: treatmentSuggestions.length,
     highPriorityTreatments: treatmentSuggestions.filter(t => t.priority === 'High').length,
     lastVisitCase: patientCases.length > 0 
-      ? patientCases.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())[0]
+      ? [...patientCases].sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())[0]
       : null
   }), [patientCases, treatmentSuggestions]);
+
+  const lastVisitLabel = useMemo(() => {
+    if (!lastVisitCase) {
+      return 'No visits recorded yet';
+    }
+
+    return `Last visit on ${new Date(lastVisitCase.uploadedAt).toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    })}`;
+  }, [lastVisitCase]);
+
+  const nextAppointment = upcomingAppointments[0] ?? null;
+
+  const remindMeItems = useMemo(() => {
+    const items: Array<{ id: string; icon: string; title: string; meta: string; done?: boolean; actionView?: string }> = [];
+
+    if (nextAppointment) {
+      items.push({
+        id: 'next-visit',
+        icon: 'calendar',
+        title: `Upcoming ${getAppointmentTypeLabel(nextAppointment.type)}`,
+        meta: `${getRelativeDate(nextAppointment.date)} at ${formatTime(nextAppointment.time)}`,
+        actionView: 'patient-appointments',
+      });
+    }
+
+    items.push({
+      id: 'records',
+      icon: 'file-text',
+      title: `${readyResultsCount} result${readyResultsCount === 1 ? '' : 's'} ready to read`,
+      meta: readyResultsCount > 0 ? 'Open Records to view your latest update' : 'No new result shared yet',
+      done: readyResultsCount === 0,
+      actionView: 'patient-results',
+    });
+
+    items.push({
+      id: 'messages',
+      icon: 'message-circle',
+      title: 'Check in with your dentist',
+      meta: 'Use Chat for quick questions before your next visit',
+      actionView: 'patient-messages',
+    });
+
+    return items;
+  }, [nextAppointment, readyResultsCount]);
 
   // Handle file selection
   const handleFileSelect = useCallback((file: File) => {
@@ -349,443 +432,311 @@ const PatientDashboard = () => {
     setShowReportModal(true);
   };
 
-  // Render Timeline from cases
-  const renderTimeline = () => {
-    if (backendJobs.length > 0) {
-      const sortedJobs = [...backendJobs]
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, 3);
+  const recentActivityEntries = useMemo(() => {
+    const staticEntries = [
+      {
+        id: 'demo-1',
+        date: 'Jan 24, 2026',
+        title: 'Panoramic X-Ray',
+        description: '2 finding(s) detected',
+        status: 'Needs Review',
+      },
+      {
+        id: 'demo-2',
+        date: 'Jan 22, 2026',
+        title: 'Panoramic X-Ray',
+        description: '1 finding(s) detected',
+        status: 'Finalized',
+      },
+      {
+        id: 'demo-3',
+        date: 'Jan 20, 2026',
+        title: 'Panoramic X-Ray',
+        description: '1 finding(s) detected',
+        status: 'Results Sent',
+      },
+      {
+        id: 'demo-4',
+        date: 'Jan 18, 2026',
+        title: 'Bitewing Scan',
+        description: '3 finding(s) detected',
+        status: 'Needs Review',
+      },
+      {
+        id: 'demo-5',
+        date: 'Jan 15, 2026',
+        title: 'Periapical Scan',
+        description: 'No urgent flags',
+        status: 'Finalized',
+      },
+      {
+        id: 'demo-6',
+        date: 'Jan 12, 2026',
+        title: 'Panoramic X-Ray',
+        description: '2 finding(s) detected',
+        status: 'Reviewed by Dentist',
+      },
+      {
+        id: 'demo-7',
+        date: 'Jan 9, 2026',
+        title: 'Panoramic X-Ray',
+        description: '1 finding(s) detected',
+        status: 'Finalized',
+      },
+      {
+        id: 'demo-8',
+        date: 'Jan 6, 2026',
+        title: 'Bitewing Scan',
+        description: '2 finding(s) detected',
+        status: 'Results Sent',
+      },
+    ];
 
-      return (
-        <div className="timeline">
-          {sortedJobs.map((job) => (
-            <div className="timeline-item" key={job.job_id}>
-              <div className="timeline-date">{formatDate(job.created_at)}</div>
-              <div className="timeline-content">
-                <div className="timeline-title">CT Scan #{job.ct_scan_id}</div>
-                <div className="timeline-description">
-                  {job.is_fallback_mode ? 'Fallback analysis pipeline' : 'Standard analysis pipeline'}
-                </div>
-                <span className="timeline-status">{getBackendJobStatusLabel(job.status)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      );
+    if (backendJobs.length > 0) {
+      const dynamicEntries = [...backendJobs]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 6)
+        .map((job) => ({
+          id: job.job_id,
+          date: formatDate(job.created_at),
+          title: `CT Scan #${job.ct_scan_id}`,
+          description: job.is_fallback_mode ? 'Fallback analysis pipeline' : 'Standard analysis pipeline',
+          status: getBackendJobStatusLabel(job.status),
+        }));
+
+      return [...dynamicEntries, ...staticEntries];
     }
 
-    const sortedCases = [...patientCases].sort((a, b) => 
-      new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
-    ).slice(0, 3);
+    const dynamicEntries = [...patientCases]
+      .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
+      .slice(0, 6)
+      .map((caseItem) => ({
+        id: caseItem.id,
+        date: formatDate(caseItem.uploadedAt),
+        title: caseItem.imageType,
+        description: `${caseItem.aiFindings.length} finding(s) detected`,
+        status: getStatusLabel(caseItem.status),
+      }));
 
-    return (
-      <div className="timeline">
-        {sortedCases.map((caseItem) => (
-          <div className="timeline-item" key={caseItem.id}>
-            <div className="timeline-date">
-              {formatDate(caseItem.uploadedAt)}
-            </div>
-            <div className="timeline-content">
-              <div className="timeline-title">{caseItem.imageType}</div>
-              <div className="timeline-description">
-                {caseItem.aiFindings.length} finding(s) detected
-              </div>
-              <span className="timeline-status">{getStatusLabel(caseItem.status)}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  };
+      return [...dynamicEntries, ...staticEntries];
+  }, [backendJobs, patientCases]);
 
-  // Render Treatment Plans
-  const renderTreatmentPlans = () => (
-    <div className="treatment-list">
-      {treatmentSuggestions.map((item, index) => (
-        <div className="treatment-plan" key={index}>
-          <div className="treatment-header">
-            <div>
-              <div className="treatment-name">{item.treatment}</div>
-              <div className="treatment-code">{item.cdt_code}</div>
-            </div>
-            <span className={`priority-badge ${item.priority.toLowerCase()}`}>{item.priority} Priority</span>
-          </div>
-          <div className="treatment-description">{item.description}</div>
-          <div className="treatment-cost">Estimated Cost: {item.estimated_cost}</div>
-        </div>
-      ))}
-    </div>
+  const recentActivityItems = useMemo(
+    () => recentActivityEntries.map((entry) => `${entry.date} - ${entry.title}`),
+    [recentActivityEntries]
   );
-
-  // Render Tooth SVG
-  const renderToothSVG = (toothNumber: number, toothData: { surfaces?: Record<string, string>, status?: string, aiDetected?: boolean } = {}) => {
-    const { surfaces = {}, status, aiDetected } = toothData;
-    
-    const getSurfaceClass = (surface: string) => {
-      const state = surfaces[surface];
-      if (!state) return '';
-      if (state === 'finding' && aiDetected) return 'surface-ai-finding';
-      if (state === 'finding') return 'surface-finding';
-      if (state === 'planned') return 'surface-planned';
-      if (state === 'completed') return 'surface-completed';
-      if (state === 'existing') return 'surface-existing';
-      return '';
-    };
-
-    return (
-      <div className="tooth-svg-container" key={toothNumber} data-tooth={toothNumber}>
-        <svg viewBox="0 0 50 50" className="tooth-svg">
-          <rect className="tooth-base" x="5" y="5" width="40" height="40" rx="4" />
-          <polygon className={`tooth-surface surface-B ${getSurfaceClass('B')}`} points="10,10 40,10 35,18 15,18" />
-          <polygon className={`tooth-surface surface-M ${getSurfaceClass('M')}`} points="10,10 15,18 15,32 10,40" />
-          <polygon className={`tooth-surface surface-D ${getSurfaceClass('D')}`} points="40,10 40,40 35,32 35,18" />
-          <polygon className={`tooth-surface surface-L ${getSurfaceClass('L')}`} points="10,40 15,32 35,32 40,40" />
-          <polygon className={`tooth-surface surface-O ${getSurfaceClass('O')}`} points="15,18 35,18 35,32 15,32" />
-          
-          {status === 'missing' && (
-            <>
-              <line className="status-indicator missing-x" x1="10" y1="10" x2="40" y2="40" />
-              <line className="status-indicator missing-x" x1="40" y1="10" x2="10" y2="40" />
-            </>
-          )}
-          {status === 'implant' && (
-            <>
-              <circle className="status-indicator implant-circle" cx="25" cy="25" r="12" />
-              <line className="status-indicator implant-line" x1="25" y1="13" x2="25" y2="37" />
-            </>
-          )}
-          
-          {aiDetected && (
-            <>
-              <circle className="ai-indicator" cx="42" cy="8" r="8" />
-              <text x="42" y="11" className="ai-indicator-text">AI</text>
-            </>
-          )}
-        </svg>
-        <div className="tooth-number">{toothNumber}</div>
-      </div>
-    );
-  };
-
-  // Clinical Odontogram State
-  const [numberingSystem, setNumberingSystem] = useState<'FDI' | 'Universal'>('FDI');
-  const [dentitionType, setDentitionType] = useState<'adult' | 'child'>('adult');
-  const [layerFilters, setLayerFilters] = useState({ findings: true, planned: true, completed: true });
-
-  // Generate tooth data from cases
-  const generateToothData = () => {
-    const toothData: Record<number, { surfaces?: Record<string, string>, status?: string, aiDetected?: boolean }> = {};
-    
-    patientCases.forEach(caseItem => {
-      caseItem.aiFindings.forEach(finding => {
-        toothData[finding.tooth] = {
-          surfaces: { O: 'finding' },
-          aiDetected: true
-        };
-      });
-      caseItem.finalFindings.forEach(finding => {
-        if (finding.status === 'accepted') {
-          toothData[finding.tooth] = {
-            surfaces: { O: 'completed' },
-            aiDetected: false
-          };
-        }
-      });
-    });
-    
-    return toothData;
-  };
-
-  const sampleToothData = generateToothData();
-
-  // Render Clinical Odontogram
-  const renderClinicalOdontogram = () => {
-    const adultTeeth = {
-      upperRight: [18, 17, 16, 15, 14, 13, 12, 11],
-      upperLeft: [21, 22, 23, 24, 25, 26, 27, 28],
-      lowerRight: [48, 47, 46, 45, 44, 43, 42, 41],
-      lowerLeft: [31, 32, 33, 34, 35, 36, 37, 38]
-    };
-
-    const childTeeth = {
-      upperRight: [55, 54, 53, 52, 51],
-      upperLeft: [61, 62, 63, 64, 65],
-      lowerRight: [85, 84, 83, 82, 81],
-      lowerLeft: [71, 72, 73, 74, 75]
-    };
-
-    const teeth = dentitionType === 'adult' ? adultTeeth : childTeeth;
-
-    return (
-      <div className="clinical-odontogram">
-        <div className="odontogram-controls">
-          <div className="control-group">
-            <label>Numbering:</label>
-            <select 
-              value={numberingSystem} 
-              onChange={(e) => setNumberingSystem(e.target.value as 'FDI' | 'Universal')}
-              className="numbering-select"
-            >
-              <option value="FDI">FDI (ISO)</option>
-              <option value="Universal">Universal</option>
-            </select>
-          </div>
-
-          <div className="control-group">
-            <label>Dentition:</label>
-            <div className="dentition-toggle">
-              <button 
-                className={`toggle-btn ${dentitionType === 'adult' ? 'active' : ''}`}
-                onClick={() => setDentitionType('adult')}
-              >
-                Adult (32)
-              </button>
-              <button 
-                className={`toggle-btn ${dentitionType === 'child' ? 'active' : ''}`}
-                onClick={() => setDentitionType('child')}
-              >
-                Child (20)
-              </button>
-            </div>
-          </div>
-
-          <div className="control-group">
-            <label>Layers:</label>
-            <div className="layer-toggles">
-              <label className="layer-checkbox">
-                <input 
-                  type="checkbox" 
-                  checked={layerFilters.findings} 
-                  onChange={(e) => setLayerFilters({...layerFilters, findings: e.target.checked})}
-                />
-                <span className="layer-swatch finding"></span>
-                Findings
-              </label>
-              <label className="layer-checkbox">
-                <input 
-                  type="checkbox" 
-                  checked={layerFilters.planned} 
-                  onChange={(e) => setLayerFilters({...layerFilters, planned: e.target.checked})}
-                />
-                <span className="layer-swatch planned"></span>
-                Planned
-              </label>
-              <label className="layer-checkbox">
-                <input 
-                  type="checkbox" 
-                  checked={layerFilters.completed} 
-                  onChange={(e) => setLayerFilters({...layerFilters, completed: e.target.checked})}
-                />
-                <span className="layer-swatch completed"></span>
-                Completed
-              </label>
-            </div>
-          </div>
-
-          <div className="control-group export-buttons">
-            <button className="btn btn-outline btn-sm" onClick={() => console.log('Export JSON')}>
-              <Icon name="download" /> JSON
-            </button>
-            <button className="btn btn-outline btn-sm" onClick={() => console.log('Export PDF')}>
-              <Icon name="file-text" /> PDF
-            </button>
-          </div>
-        </div>
-
-        <div className="odontogram-chart">
-          <div className="jaw-section upper">
-            <div className="jaw-label">Upper</div>
-            <div className="quadrant-row">
-              <div className="quadrant upper-right">
-                <div className="quadrant-label">UR</div>
-                <div className="teeth-row">
-                  {teeth.upperRight.map(tooth => renderToothSVG(tooth, sampleToothData[tooth]))}
-                </div>
-              </div>
-              <div className="midline"></div>
-              <div className="quadrant upper-left">
-                <div className="quadrant-label">UL</div>
-                <div className="teeth-row">
-                  {teeth.upperLeft.map(tooth => renderToothSVG(tooth, sampleToothData[tooth]))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="jaw-section lower">
-            <div className="quadrant-row">
-              <div className="quadrant lower-right">
-                <div className="quadrant-label">LR</div>
-                <div className="teeth-row">
-                  {teeth.lowerRight.map(tooth => renderToothSVG(tooth, sampleToothData[tooth]))}
-                </div>
-              </div>
-              <div className="midline"></div>
-              <div className="quadrant lower-left">
-                <div className="quadrant-label">LL</div>
-                <div className="teeth-row">
-                  {teeth.lowerLeft.map(tooth => renderToothSVG(tooth, sampleToothData[tooth]))}
-                </div>
-              </div>
-            </div>
-            <div className="jaw-label">Lower</div>
-          </div>
-        </div>
-
-        <div className="chart-legend">
-          <div className="legend-section">
-            <div className="legend-title">Status</div>
-            <div className="legend-items">
-              <div className="legend-item">
-                <span className="legend-swatch finding"></span>
-                <span>Finding</span>
-              </div>
-              <div className="legend-item">
-                <span className="legend-swatch planned"></span>
-                <span>Planned</span>
-              </div>
-              <div className="legend-item">
-                <span className="legend-swatch completed"></span>
-                <span>Completed</span>
-              </div>
-            </div>
-          </div>
-          <div className="legend-section">
-            <div className="legend-title">Source</div>
-            <div className="legend-items">
-              <div className="legend-item">
-                <span className="source-badge ai">AI</span>
-                <span>AI Detected</span>
-              </div>
-              <div className="legend-item">
-                <span className="source-badge dr">Dr</span>
-                <span>Dentist Added</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Kept for upcoming dedicated patient treatment/charting views.
-  void renderTreatmentPlans;
-  void renderClinicalOdontogram;
 
   const renderContent = () => {
     switch (activeView) {
       // ============== PATIENT DASHBOARD ==============
       case 'patient-dashboard':
         return (
-          <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>
-              Welcome, {CURRENT_PATIENT_NAME.split(' ')[0]}
-            </h2>
-            
-            <div className="stats-grid">
-              <div className="stat-card">
-                <div className="stat-header">
-                  <span className="stat-label">Total Visits</span>
-                  <div className="stat-icon" style={{ background: 'var(--color-bg-1)', color: '#2563EB' }}>
-                    <Icon name="calendar" />
-                  </div>
-                </div>
-                <div className="stat-value">{totalVisits}</div>
-                <div className="stat-change">
-                  Last visit: {lastVisitCase ? formatDate(lastVisitCase.uploadedAt) : 'N/A'}
-                </div>
-              </div>
-              
-              <div className="stat-card">
-                <div className="stat-header">
-                  <span className="stat-label">Active Treatments</span>
-                  <div className="stat-icon" style={{ background: 'var(--color-bg-2)', color: '#F59E0B' }}>
-                    <Icon name="activity" />
-                  </div>
-                </div>
-                <div className="stat-value">{activeTreatments}</div>
-                <div className="stat-change">{highPriorityTreatments} high priority</div>
-              </div>
-              
-              <div className="stat-card">
-                <div className="stat-header">
-                  <span className="stat-label">Results Ready</span>
-                  <div className="stat-icon" style={{ background: 'var(--color-bg-3)', color: '#10B981' }}>
-                    <Icon name="check-circle" />
-                  </div>
-                </div>
-                <div className="stat-value">{readyResultsCount}</div>
-                <div className="stat-change">{displayResults.length} total tracked</div>
-              </div>
+          <section className="patient-home">
+
+            {/* Hero greeting */}
+            <div className="patient-home__greeting-wrap">
+              <TextType
+                as="h2"
+                className="patient-home__greeting"
+                text={`Welcome back, ${CURRENT_PATIENT_NAME.split(' ')[0]}`}
+                typingSpeed={38}
+                initialDelay={120}
+                loop={false}
+                startOnVisible
+              />
+              <p className="patient-home__subtext">
+                Here's an overview of your dental care and upcoming schedule.
+              </p>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-24)' }}>
-              <div className="card">
-                <div className="card-header">
-                  <h3 className="card-title">Recent Activity</h3>
+            {/* Top row: Quick Actions (left) + Compact Metrics (right) */}
+            <div className="patient-home__top-row">
+
+              {/* Quick Actions */}
+              <article className="card patient-main-card">
+                <div className="patient-main-card__head">
+                  <h3>Quick actions</h3>
                 </div>
-                {renderTimeline()}
+                <div className="patient-actions-grid">
+                  <DashboardActionButton
+                    icon="upload"
+                    title="Upload Scan"
+                    description="Send your latest panoramic image"
+                    onClick={() => setActiveView('patient-upload')}
+                  />
+                  <DashboardActionButton
+                    icon="file-text"
+                    title="Open Records"
+                    description="Read your recent results"
+                    onClick={() => setActiveView('patient-results')}
+                  />
+                  <DashboardActionButton
+                    icon="message-circle"
+                    title="Message Dentist"
+                    description="Ask a question in chat"
+                    onClick={() => setActiveView('patient-messages')}
+                  />
+                  <DashboardActionButton
+                    icon="clock"
+                    title="See Calendar"
+                    description="Track your care timeline"
+                    onClick={() => setActiveView('patient-history')}
+                  />
+                </div>
+              </article>
+
+              {/* Compact Care Snapshot */}
+              <article className="card patient-metrics-summary">
+                <div className="patient-main-card__head">
+                  <h3>Care snapshot</h3>
+                </div>
+                <ul className="patient-metrics-summary__list">
+                  <li className="patient-metrics-summary__item">
+                    <div className="patient-metrics-summary__icon patient-metrics-summary__icon--blue" aria-hidden="true">
+                      <Icon name="calendar" size={16} />
+                    </div>
+                    <div className="patient-metrics-summary__body">
+                      <span className="patient-metrics-summary__label">Total Visits</span>
+                      <span className="patient-metrics-summary__meta">{lastVisitLabel}</span>
+                    </div>
+                    <span className="patient-metrics-summary__value">{totalVisits}</span>
+                  </li>
+                  <li className="patient-metrics-summary__item">
+                    <div className="patient-metrics-summary__icon patient-metrics-summary__icon--orange" aria-hidden="true">
+                      <Icon name="activity" size={16} />
+                    </div>
+                    <div className="patient-metrics-summary__body">
+                      <span className="patient-metrics-summary__label">Active Treatments</span>
+                      <span className="patient-metrics-summary__meta">
+                        {highPriorityTreatments > 0 ? `${highPriorityTreatments} high priority` : 'No high priority items'}
+                      </span>
+                    </div>
+                    <span className="patient-metrics-summary__value">{activeTreatments}</span>
+                  </li>
+                  <li className="patient-metrics-summary__item">
+                    <div className="patient-metrics-summary__icon patient-metrics-summary__icon--teal" aria-hidden="true">
+                      <Icon name="check-circle" size={16} />
+                    </div>
+                    <div className="patient-metrics-summary__body">
+                      <span className="patient-metrics-summary__label">Records Ready</span>
+                      <span className="patient-metrics-summary__meta">{displayResults.length} total records</span>
+                    </div>
+                    <span className="patient-metrics-summary__value">{readyResultsCount}</span>
+                  </li>
+                </ul>
+              </article>
+            </div>
+
+            {/* Main layout: content + sidebar */}
+            <div className="patient-home__layout">
+              <div className="patient-home__main">
+
+                {/* Next Appointment — compact */}
+                <article className="card patient-main-card patient-main-card--compact patient-main-card--focus">
+                  <div className="patient-main-card__head">
+                    <h3>Next appointment</h3>
+                    <button className="btn btn--outline btn--sm" onClick={() => setActiveView('patient-appointments')}>
+                      View all
+                    </button>
+                  </div>
+                  {nextAppointment ? (
+                    <div className="patient-next-appointment">
+                      <div className="patient-next-appointment__badge">
+                        <Icon name="calendar" />
+                      </div>
+                      <div>
+                        <p className="patient-next-appointment__title">
+                          {getAppointmentTypeLabel(nextAppointment.type)} with {nextAppointment.dentistName}
+                        </p>
+                        <p className="patient-next-appointment__meta">
+                          {getRelativeDate(nextAppointment.date)} at {formatTime(nextAppointment.time)} · {nextAppointment.duration} min
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="patient-empty-copy">No upcoming appointment yet. Book one in under a minute.</p>
+                  )}
+                  <button className="btn btn--primary btn--sm" onClick={() => setShowScheduler(true)}>
+                    <Icon name="plus" />
+                    Book Appointment
+                  </button>
+                </article>
+
+                {/* Recent Activity */}
+                <article className="card patient-main-card">
+                  <div className="patient-main-card__head">
+                    <h3>Recent activity</h3>
+                  </div>
+                  {recentActivityEntries.length > 0 ? (
+                    <AnimatedList
+                      items={recentActivityItems}
+                      className="patient-activity-list"
+                      itemClassName="patient-activity-list__item"
+                      showGradients
+                      enableArrowNavigation
+                      displayScrollbar
+                      initialSelectedIndex={0}
+                      renderItem={(_, index, isSelected) => {
+                        const entry = recentActivityEntries[index];
+                        if (!entry) return null;
+                        return (
+                          <div className={`patient-activity-entry ${isSelected ? 'is-selected' : ''}`}>
+                            <div className="patient-activity-entry__main">
+                              <p className="patient-activity-entry__title">{entry.title}</p>
+                              <p className="patient-activity-entry__desc">{entry.description}</p>
+                            </div>
+                            <div className="patient-activity-entry__meta">
+                              <p className="patient-activity-entry__date">{entry.date}</p>
+                              <span className={`patient-activity-entry__status activity-pill--${getRecentActivityTone(entry.status)}`}>
+                                {entry.status}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                  ) : (
+                    <p className="patient-empty-copy">No recent activity yet.</p>
+                  )}
+                </article>
               </div>
 
-              <div className="card">
-                <div className="card-header">
-                  <h3 className="card-title">Quick Actions</h3>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-12)' }}>
-                  <button className="btn btn--primary btn--full" onClick={() => setActiveView('patient-upload')}>
-                    <Icon name="upload" />
-                    Upload New Images
-                  </button>
-                  <button className="btn btn--outline btn--full" onClick={() => setActiveView('patient-results')}>
-                    <Icon name="eye" />
-                    View Results
-                  </button>
-                  <button className="btn btn--outline btn--full" onClick={() => setActiveView('patient-appointments')}>
-                    <Icon name="calendar" />
-                    My Appointments
-                  </button>
-                  <button className="btn btn--outline btn--full" onClick={() => setActiveView('patient-treatment')}>
-                    <Icon name="file-text" />
-                    View Treatment Plan
-                  </button>
-                </div>
-
-                {/* Upcoming Appointment Preview */}
-                {upcomingAppointments.length > 0 && (
-                  <div style={{ 
-                    marginTop: 'var(--space-16)', 
-                    padding: 'var(--space-12)', 
-                    background: 'var(--color-bg-1)', 
-                    borderRadius: 'var(--radius-md)',
-                    borderLeft: '3px solid #4F46E5'
-                  }}>
-                    <div style={{ fontSize: 'var(--font-size-xs)', color: '#4F46E5', fontWeight: 'var(--font-weight-semibold)', marginBottom: '4px' }}>
-                      NEXT APPOINTMENT
+              {/* Right sidebar — Care Team only */}
+              <aside className="patient-home__right">
+                <article className="card patient-right-card">
+                  <h3 className="patient-right-card__title">My care team</h3>
+                  <div className="patient-care-card">
+                    <div className="patient-care-card__avatar" aria-hidden="true">
+                      <Icon name="users" size={18} />
                     </div>
-                    <div style={{ fontWeight: 'var(--font-weight-medium)', marginBottom: '4px' }}>
-                      {getAppointmentTypeLabel(upcomingAppointments[0].type)}
-                    </div>
-                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                      {getRelativeDate(upcomingAppointments[0].date)} at {formatTime(upcomingAppointments[0].time)}
+                    <div>
+                      <p className="patient-care-card__title">Primary Dentist</p>
+                      <p className="patient-care-card__meta">
+                        {nextAppointment?.dentistName || 'Assigned doctor'}
+                      </p>
                     </div>
                   </div>
-                )}
-              </div>
+                  <button className="btn btn--outline btn--sm btn--full" onClick={() => setActiveView('patient-messages')}>
+                    <Icon name="message-circle" />
+                    Open Chat
+                  </button>
+                </article>
+              </aside>
             </div>
-          </>
+          </section>
         );
 
       // ============== PATIENT RESULTS ==============
       case 'patient-results':
         return (
           <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>My Results</h2>
+            <h2 className="patient-view-title">My Results</h2>
             
             {resolvedResultCards.length > 0 ? (
               <div className="results-list">
                 {resolvedResultCards.map(({ caseItem, statusLabel, statusClass, metaDate, metaLabel }) => {
                   return (
-                  <div className="result-card card" key={caseItem.id} style={{ marginBottom: 'var(--space-16)' }}>
+                  <div className="result-card result-card--patient card" key={caseItem.id}>
                     <div className="result-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-16)' }}>
                       <div className="result-info">
                         <h3 className="result-title" style={{ margin: 0 }}>{caseItem.imageType} Analysis</h3>
@@ -847,15 +798,7 @@ const PatientDashboard = () => {
                               Tooth {finding.tooth}
                             </div>
                             <div className="finding-condition" style={{ flex: 1 }}>{finding.condition}</div>
-                            <span className={`urgency-badge ${finding.urgency}`} style={{
-                              padding: '2px 8px',
-                              borderRadius: '12px',
-                              fontSize: 'var(--font-size-xs)',
-                              fontWeight: 'var(--font-weight-semibold)',
-                              textTransform: 'uppercase',
-                              background: finding.urgency === 'high' ? '#FEE2E2' : finding.urgency === 'medium' ? '#FEF3C7' : '#D1FAE5',
-                              color: finding.urgency === 'high' ? '#B91C1C' : finding.urgency === 'medium' ? '#B45309' : '#047857'
-                            }}>
+                            <span className={`urgency-badge urgency-badge--${finding.urgency}`}>
                               {finding.urgency}
                             </span>
                           </div>
@@ -900,7 +843,7 @@ const PatientDashboard = () => {
       case 'patient-upload':
         return (
           <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Upload Dental Images</h2>
+            <h2 className="patient-view-title">Upload Dental Images</h2>
             
             <div className="alert info" style={{ 
               display: 'flex', 
@@ -964,16 +907,7 @@ const PatientDashboard = () => {
 
               {/* Upload Status Messages */}
               {uploadStatus === 'complete' && (
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-12)',
-                  padding: 'var(--space-16)',
-                  background: '#D1FAE5',
-                  borderRadius: 'var(--radius-md)',
-                  marginBottom: 'var(--space-16)',
-                  color: '#047857'
-                }}>
+                <div className="upload-feedback upload-feedback--success">
                   <Icon name="check-circle" />
                   <div>
                     <strong>Upload Complete!</strong> Your image has been analyzed. Redirecting to results...
@@ -982,16 +916,7 @@ const PatientDashboard = () => {
               )}
 
               {uploadStatus === 'error' && (
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-12)',
-                  padding: 'var(--space-16)',
-                  background: '#FEE2E2',
-                  borderRadius: 'var(--radius-md)',
-                  marginBottom: 'var(--space-16)',
-                  color: '#B91C1C'
-                }}>
+                <div className="upload-feedback upload-feedback--error">
                   <Icon name="alert-triangle" />
                   <div>
                     <strong>Upload Failed!</strong> Please try again.
@@ -1130,13 +1055,11 @@ const PatientDashboard = () => {
                       
                       {uploadStatus === 'idle' && (
                         <div style={{ display: 'flex', gap: 'var(--space-8)' }}>
-                          <span style={{
+                          <span className="upload-ready-pill" style={{
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: '4px',
                             padding: '4px 12px',
-                            background: '#D1FAE5',
-                            color: '#047857',
                             borderRadius: 'var(--radius-md)',
                             fontSize: 'var(--font-size-sm)'
                           }}>
@@ -1198,7 +1121,7 @@ const PatientDashboard = () => {
       case 'patient-history':
         return (
           <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Case Timeline</h2>
+            <h2 className="patient-view-title">Care Calendar</h2>
             
             <div className="case-timeline">
               {patientCases
@@ -1230,22 +1153,19 @@ const PatientDashboard = () => {
                   };
 
                   return (
-                    <div className="timeline-case-card card" key={caseItem.id} style={{ marginBottom: 'var(--space-16)' }}>
+                    <div className="timeline-case-card timeline-case-card--patient card" key={caseItem.id}>
                       <div className="timeline-case-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-16)', marginBottom: 'var(--space-12)' }}>
-                        <div className={`timeline-case-icon ${getStatusClass(caseItem.status)}`} style={{
-                          width: '48px',
-                          height: '48px',
-                          borderRadius: '50%',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          background: caseItem.status === 'SENT_TO_PATIENT' ? '#D1FAE5' : 
-                                     caseItem.status === 'FINALIZED' ? '#DBEAFE' : 
-                                     caseItem.status === 'NEEDS_REVIEW' ? '#FEF3C7' : '#E5E7EB',
-                          color: caseItem.status === 'SENT_TO_PATIENT' ? '#047857' : 
-                                 caseItem.status === 'FINALIZED' ? '#1D4ED8' : 
-                                 caseItem.status === 'NEEDS_REVIEW' ? '#B45309' : '#374151'
-                        }}>
+                        <div
+                          className={`timeline-case-icon timeline-case-icon--patient ${
+                            caseItem.status === 'SENT_TO_PATIENT'
+                              ? 'timeline-case-icon--sent'
+                              : caseItem.status === 'FINALIZED'
+                                ? 'timeline-case-icon--finalized'
+                                : caseItem.status === 'NEEDS_REVIEW'
+                                  ? 'timeline-case-icon--review'
+                                  : 'timeline-case-icon--default'
+                          }`}
+                        >
                           <Icon name={getStatusIcon()} />
                         </div>
                         <div className="timeline-case-info" style={{ flex: 1 }}>
@@ -1300,7 +1220,7 @@ const PatientDashboard = () => {
       case 'patient-messages':
         return (
           <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Messages</h2>
+            <h2 className="patient-view-title">Messages</h2>
             <MessagingSystem
               userId={CURRENT_PATIENT_ID}
               userName={CURRENT_PATIENT_NAME}
@@ -1313,29 +1233,14 @@ const PatientDashboard = () => {
       case 'patient-appointments':
         return (
           <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>My Appointments</h2>
+            <h2 className="patient-view-title">My Appointments</h2>
             
             {/* Next Appointment Highlight */}
             {upcomingAppointments.length > 0 && (
-              <div className="card" style={{ 
-                marginBottom: 'var(--space-24)',
-                background: 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)',
-                border: '1px solid #C7D2FE'
-              }}>
+              <div className="card patient-appointment-highlight">
                 <div className="card-body" style={{ padding: 'var(--space-20)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-16)' }}>
-                    <div style={{ 
-                      width: '64px', 
-                      height: '64px', 
-                      borderRadius: 'var(--radius-lg)',
-                      background: '#4F46E5',
-                      color: 'white',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0
-                    }}>
+                    <div className="patient-appointment-highlight__date-box">
                       <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)' }}>
                         {new Date(upcomingAppointments[0].date + 'T00:00:00').getDate()}
                       </div>
@@ -1344,7 +1249,7 @@ const PatientDashboard = () => {
                       </div>
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: '#4F46E5', fontWeight: 'var(--font-weight-semibold)', marginBottom: '4px' }}>
+                      <div className="patient-appointment-highlight__label" style={{ fontSize: 'var(--font-size-xs)', fontWeight: 'var(--font-weight-semibold)', marginBottom: '4px' }}>
                         NEXT APPOINTMENT
                       </div>
                       <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-bold)', marginBottom: '4px' }}>
@@ -1388,6 +1293,7 @@ const PatientDashboard = () => {
       userId={CURRENT_PATIENT_ID}
       activeView={activeView}
       onViewChange={setActiveView}
+      reminderItems={remindMeItems}
     >
       {renderContent()}
       

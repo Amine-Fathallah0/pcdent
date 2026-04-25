@@ -140,7 +140,7 @@ const NotificationCenter = ({ userId, onNavigate }: NotificationCenterProps) => 
   };
 
   return (
-    <div className="notification-center" ref={dropdownRef}>
+    <div className={`notification-center ${isOpen ? 'is-open' : ''}`} ref={dropdownRef}>
       <button
         className="notification-bell"
         onClick={() => setIsOpen(!isOpen)}
