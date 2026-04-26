@@ -6,10 +6,11 @@ import AppointmentScheduler from '../components/appointments/AppointmentSchedule
 import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
 import FullReportModal from '../components/FullReportModal';
+import AuthenticatedScanImage from '../components/AuthenticatedScanImage';
 import TextType from '../components/ui/TextType';
 import AnimatedList from '../components/ui/AnimatedList';
 import { Icon } from '../components/ui';
-import { fetchJobs, fetchMyLinks, generateDraft, requestDentistLink, uploadCTScan, type AIJobDto } from '../lib/backendApi';
+import { fetchJob, fetchJobs, fetchMyLinks, generateDraft, requestDentistLink, uploadCTScan, type AIJobDto } from '../lib/backendApi';
 import { 
   database, 
   createCase,
@@ -125,6 +126,7 @@ const PatientDashboard = () => {
 
   const [activeView, setActiveView] = useState('patient-dashboard');
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
+  const [selectedJob, setSelectedJob] = useState<AIJobDto | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
   const [appointments, setAppointments] = useState<Appointment[]>(getAppointmentsByPatient(CURRENT_PATIENT_ID));
@@ -158,7 +160,7 @@ const PatientDashboard = () => {
   }, [refreshKey, loadBackendJobs]);
 
   useEffect(() => {
-    if (activeView !== 'patient-results') {
+    if (activeView !== 'patient-results' && activeView !== 'patient-case-detail') {
       return;
     }
 
@@ -171,6 +173,15 @@ const PatientDashboard = () => {
       window.clearInterval(intervalId);
     };
   }, [activeView, loadBackendJobs]);
+
+  // Keep selectedJob in sync when backendJobs refresh (so dentist updates flow in live).
+  useEffect(() => {
+    if (!selectedJob) return;
+    const fresh = backendJobs.find((j) => j.job_id === selectedJob.job_id);
+    if (fresh && fresh !== selectedJob) {
+      setSelectedJob(fresh);
+    }
+  }, [backendJobs, selectedJob]);
 
   // Dynamic data reads on each render. setRefreshKey triggers re-render when mutated data changes.
   const patientCases = getCasesByPatient(CURRENT_PATIENT_ID);
@@ -186,6 +197,14 @@ const PatientDashboard = () => {
     return map;
   }, [backendJobs]);
 
+  const sortedBackendJobs = useMemo(
+    () =>
+      [...backendJobs].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      ),
+    [backendJobs]
+  );
+
   const backendLinkedResults = useMemo(
     () =>
       [...patientCases]
@@ -194,11 +213,10 @@ const PatientDashboard = () => {
     [patientCases]
   );
 
-  const displayResults = backendLinkedResults.length > 0 ? backendLinkedResults : patientResults;
-
-  const resolvedResultCards = useMemo(
+  // Mock-only fallback used when the patient has no backend jobs at all.
+  const fallbackResultCards = useMemo(
     () =>
-      displayResults.map((caseItem) => {
+      (backendLinkedResults.length > 0 ? backendLinkedResults : patientResults).map((caseItem) => {
         const matchedJob = caseItem.backendJobId ? jobsById.get(caseItem.backendJobId) : undefined;
         const statusLabel = matchedJob ? getBackendJobStatusLabel(matchedJob.status) : getStatusLabel(caseItem.status);
         const statusClass = matchedJob ? getBackendJobStatusClass(matchedJob.status) : getStatusClass(caseItem.status);
@@ -218,13 +236,19 @@ const PatientDashboard = () => {
           isReady,
         };
       }),
-    [displayResults, jobsById]
+    [backendLinkedResults, patientResults, jobsById]
   );
 
-  const readyResultsCount = useMemo(
-    () => resolvedResultCards.filter((result) => result.isReady).length,
-    [resolvedResultCards]
-  );
+  const totalDisplayResults = sortedBackendJobs.length || fallbackResultCards.length;
+
+  const readyResultsCount = useMemo(() => {
+    if (sortedBackendJobs.length > 0) {
+      return sortedBackendJobs.filter(
+        (j) => j.status === 'dentist_reviewed' || j.status === 'finalized'
+      ).length;
+    }
+    return fallbackResultCards.filter((result) => result.isReady).length;
+  }, [sortedBackendJobs, fallbackResultCards]);
 
   // Calculate stats with useMemo
   const { totalVisits, activeTreatments, highPriorityTreatments, lastVisitCase } = useMemo(() => ({
@@ -433,8 +457,24 @@ const PatientDashboard = () => {
     }
   }, []);
 
-  // Handle View Full Report
-  const handleViewFullReport = (caseItem: Case) => {
+  // Handle View Full Report — open backend-backed detail page when available, otherwise fall back to legacy modal
+  const handleViewFullReport = async (caseItem: Case) => {
+    if (caseItem.backendJobId) {
+      const cached = jobsById.get(caseItem.backendJobId);
+      if (cached) {
+        setSelectedJob(cached);
+        setActiveView('patient-case-detail');
+        return;
+      }
+      try {
+        const fresh = await fetchJob(caseItem.backendJobId);
+        setSelectedJob(fresh);
+        setActiveView('patient-case-detail');
+        return;
+      } catch (err) {
+        console.error('Unable to load job detail', err);
+      }
+    }
     setSelectedCase(caseItem);
     setShowReportModal(true);
   };
@@ -580,7 +620,7 @@ const PatientDashboard = () => {
                     </div>
                     <div className="patient-metrics-summary__body">
                       <span className="patient-metrics-summary__label">Records Ready</span>
-                      <span className="patient-metrics-summary__meta">{displayResults.length} total records</span>
+                      <span className="patient-metrics-summary__meta">{totalDisplayResults} total records</span>
                     </div>
                     <span className="patient-metrics-summary__value">{readyResultsCount}</span>
                   </li>
@@ -723,10 +763,67 @@ const PatientDashboard = () => {
         return (
           <>
             <h2 className="patient-view-title">My Results</h2>
-            
-            {resolvedResultCards.length > 0 ? (
+
+            {sortedBackendJobs.length > 0 ? (
               <div className="results-list">
-                {resolvedResultCards.map(({ caseItem, statusLabel, statusClass, metaDate, metaLabel }) => {
+                {sortedBackendJobs.map((job) => {
+                  const statusLabel = getBackendJobStatusLabel(job.status);
+                  const statusClass = getBackendJobStatusClass(job.status);
+                  const completedDate = job.completed_at;
+                  const metaDate = completedDate || job.updated_at || job.created_at;
+                  const metaLabel = completedDate ? 'Completed' : 'Last Updated';
+                  const isReady = job.status === 'dentist_reviewed' || job.status === 'finalized';
+                  const previewSource = job.dentist_notes?.trim() || job.draft_report?.trim() || '';
+                  const preview = previewSource.length > 240 ? previewSource.slice(0, 240) + '…' : previewSource;
+                  return (
+                    <div className="result-card result-card--patient card" key={job.job_id}>
+                      <div className="result-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-16)' }}>
+                        <div className="result-info">
+                          <h3 className="result-title" style={{ margin: 0 }}>Scan #{job.ct_scan_id}</h3>
+                          <div className="result-meta" style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                            Uploaded: {formatDate(job.created_at)} · {metaLabel}: {metaDate ? formatDate(metaDate) : 'N/A'}
+                          </div>
+                        </div>
+                        <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
+                      </div>
+
+                      {preview ? (
+                        <div className="patient-explanation" style={{
+                          background: 'var(--color-bg-1)',
+                          padding: 'var(--space-16)',
+                          borderRadius: 'var(--radius-md)',
+                          marginBottom: 'var(--space-16)',
+                          borderLeft: '4px solid var(--color-primary)'
+                        }}>
+                          <h4 style={{ margin: '0 0 var(--space-8) 0' }}>
+                            {job.dentist_notes?.trim() ? "Your Dentist's Notes" : 'AI Draft Summary'}
+                          </h4>
+                          <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{preview}</p>
+                        </div>
+                      ) : (
+                        <p style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic', margin: '0 0 var(--space-16) 0' }}>
+                          {isReady ? 'No notes were added.' : 'Your dentist is still reviewing this scan.'}
+                        </p>
+                      )}
+
+                      <div className="result-actions" style={{ display: 'flex', gap: 'var(--space-12)' }}>
+                        <button
+                          className="btn btn--primary"
+                          onClick={() => { setSelectedJob(job); setActiveView('patient-case-detail'); }}
+                        >
+                          <Icon name="eye" /> View Full Report
+                        </button>
+                        <button className="btn btn--outline" onClick={() => window.print()}>
+                          <Icon name="download" /> Download PDF
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : fallbackResultCards.length > 0 ? (
+              <div className="results-list">
+                {fallbackResultCards.map(({ caseItem, statusLabel, statusClass, metaDate, metaLabel }) => {
                   return (
                   <div className="result-card result-card--patient card" key={caseItem.id}>
                     <div className="result-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-16)' }}>
@@ -739,7 +836,6 @@ const PatientDashboard = () => {
                       <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
                     </div>
 
-                    
                     <div className="result-summary" style={{ display: 'flex', gap: 'var(--space-24)', marginBottom: 'var(--space-16)' }}>
                       <div className="summary-stat" style={{ textAlign: 'center' }}>
                         <span className="summary-number" style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--color-primary)' }}>
@@ -756,9 +852,9 @@ const PatientDashboard = () => {
                     </div>
 
                     {caseItem.patientExplanation && (
-                      <div className="patient-explanation" style={{ 
-                        background: 'var(--color-bg-1)', 
-                        padding: 'var(--space-16)', 
+                      <div className="patient-explanation" style={{
+                        background: 'var(--color-bg-1)',
+                        padding: 'var(--space-16)',
                         borderRadius: 'var(--radius-md)',
                         marginBottom: 'var(--space-16)',
                         borderLeft: '4px solid var(--color-primary)'
@@ -768,47 +864,8 @@ const PatientDashboard = () => {
                       </div>
                     )}
 
-                    {caseItem.finalFindings.length > 0 && (
-                      <div className="findings-summary" style={{ marginBottom: 'var(--space-16)' }}>
-                        <h4 style={{ margin: '0 0 var(--space-12) 0' }}>Findings</h4>
-                        {caseItem.finalFindings.map(finding => (
-                          <div className="finding-item-patient" key={finding.id} style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 'var(--space-12)',
-                            padding: 'var(--space-8)',
-                            background: 'var(--color-bg-1)',
-                            borderRadius: 'var(--radius-sm)',
-                            marginBottom: 'var(--space-8)'
-                          }}>
-                            <div className="finding-tooth" style={{ 
-                              fontWeight: 'var(--font-weight-bold)',
-                              background: 'var(--color-bg-2)',
-                              padding: 'var(--space-4) var(--space-8)',
-                              borderRadius: 'var(--radius-sm)'
-                            }}>
-                              Tooth {finding.tooth}
-                            </div>
-                            <div className="finding-condition" style={{ flex: 1 }}>{finding.condition}</div>
-                            <span className={`urgency-badge urgency-badge--${finding.urgency}`}>
-                              {finding.urgency}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {caseItem.report?.recommendations && (
-                      <div className="recommendations-section" style={{ marginBottom: 'var(--space-16)' }}>
-                        <h4 style={{ margin: '0 0 var(--space-8) 0' }}>Recommendations</h4>
-                        <ul style={{ margin: 0, paddingLeft: 'var(--space-20)' }}>
-                          {caseItem.report.recommendations.map((rec, idx) => <li key={idx}>{rec}</li>)}
-                        </ul>
-                      </div>
-                    )}
-
                     <div className="result-actions" style={{ display: 'flex', gap: 'var(--space-12)' }}>
-                      <button className="btn btn--primary" onClick={() => handleViewFullReport(caseItem)}>
+                      <button className="btn btn--primary" onClick={() => void handleViewFullReport(caseItem)}>
                         <Icon name="eye" /> View Full Report
                       </button>
                       <button className="btn btn--outline" onClick={() => window.print()}>
@@ -1272,6 +1329,132 @@ const PatientDashboard = () => {
             />
           </>
         );
+
+      // ============== PATIENT CASE DETAIL (read-only) ==============
+      case 'patient-case-detail': {
+        if (!selectedJob) {
+          setActiveView('patient-results');
+          return null;
+        }
+        const job = selectedJob;
+        const imageUrl = job.annotated_image_url || job.scan_file_url;
+        const reportText = job.draft_report;
+        const notesText = job.dentist_notes;
+        const isFinalized = job.status === 'finalized';
+        const isReviewed = job.status === 'dentist_reviewed' || job.status === 'finalized';
+        return (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-16)', marginBottom: 'var(--space-24)' }}>
+              <button
+                className="btn btn--outline btn--sm"
+                onClick={() => { setActiveView('patient-results'); setSelectedJob(null); }}
+              >
+                <Icon name="chevron-left" /> Back to Results
+              </button>
+              <div style={{ flex: 1 }}>
+                <h2 className="patient-view-title" style={{ margin: 0 }}>
+                  Scan #{job.ct_scan_id}
+                </h2>
+                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                  Uploaded {formatDate(job.created_at)}
+                </div>
+              </div>
+              <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-sm)', padding: '6px 14px' }}>
+                {getBackendJobStatusLabel(job.status)}
+              </span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-24)', alignItems: 'start' }}>
+              {/* LEFT — Scan viewer */}
+              <div className="card" style={{ padding: 'var(--space-20)' }}>
+                <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-16)' }}>
+                  Your Scan
+                  {job.annotated_image_url && (
+                    <span style={{ marginLeft: 'var(--space-8)', fontSize: 'var(--font-size-xs)', color: '#047857', background: '#D1FAE5', padding: '2px 8px', borderRadius: '12px' }}>
+                      AI Annotated
+                    </span>
+                  )}
+                </h3>
+                {imageUrl ? (
+                  <AuthenticatedScanImage
+                    src={imageUrl}
+                    alt="Dental Scan"
+                    style={{ width: '100%', borderRadius: 'var(--radius-md)', display: 'block', background: '#000' }}
+                  />
+                ) : (
+                  <div style={{ width: '100%', aspectRatio: '1', background: '#0F172A', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 'var(--space-12)' }}>
+                    <Icon name="activity" />
+                    <div style={{ fontSize: 'var(--font-size-sm)', textAlign: 'center', maxWidth: '220px', lineHeight: 1.5 }}>
+                      Scan image will appear here once it has been processed.
+                    </div>
+                  </div>
+                )}
+                {!job.annotated_image_url && imageUrl && (
+                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginTop: 'var(--space-8)', textAlign: 'center' }}>
+                    Showing original scan. AI markup will be added once available.
+                  </p>
+                )}
+              </div>
+
+              {/* RIGHT — Report */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-16)' }}>
+                {!isReviewed && (
+                  <div className="alert info" style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 'var(--space-12)',
+                    padding: 'var(--space-14)',
+                    background: 'var(--color-bg-1)',
+                    borderRadius: 'var(--radius-md)',
+                    borderLeft: '4px solid var(--color-primary)',
+                  }}>
+                    <Icon name="info" />
+                    <div style={{ fontSize: 'var(--font-size-sm)' }}>
+                      Your report is still being prepared. Your dentist will review the AI draft and share final notes here once ready.
+                    </div>
+                  </div>
+                )}
+
+                <div className="card" style={{ padding: 'var(--space-20)' }}>
+                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
+                    AI Draft Report
+                  </h3>
+                  {reportText ? (
+                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.8', color: 'var(--color-text)', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', maxHeight: '260px', overflowY: 'auto' }}>
+                      {reportText}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
+                      The AI draft report has not been generated yet.
+                    </p>
+                  )}
+                </div>
+
+                <div className="card" style={{ padding: 'var(--space-20)' }}>
+                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
+                    Dentist's Notes
+                  </h3>
+                  {notesText ? (
+                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.7', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', color: 'var(--color-text)' }}>
+                      {notesText}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
+                      {isReviewed ? 'No notes were added by your dentist.' : 'Your dentist has not added notes yet.'}
+                    </p>
+                  )}
+                </div>
+
+                {isFinalized && (
+                  <div style={{ padding: 'var(--space-12)', background: '#D1FAE5', color: '#047857', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)', display: 'flex', alignItems: 'center', gap: 'var(--space-8)' }}>
+                    <Icon name="check-circle" /> Report finalized on {job.completed_at ? formatDate(job.completed_at) : '—'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        );
+      }
 
       default:
         return <p>View not found</p>;

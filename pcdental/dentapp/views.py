@@ -1,7 +1,11 @@
 import logging
+import mimetypes
+import os
 
 from django.contrib.auth import get_user_model
+from django.http import FileResponse, Http404
 from django.utils import timezone
+from django.utils.encoding import smart_str
 from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
@@ -333,6 +337,55 @@ class CTScanListCreateView(generics.ListCreateAPIView):
             'job': AIProcessingJobSerializer(job, context={'request': request}).data,
         }
         return Response(payload, status=status.HTTP_201_CREATED)
+
+
+class CTScanFileView(APIView):
+    """
+    Stream the raw CT scan file to authorized users only.
+
+    Replaces relying on Django's public ``/media/`` URL, which had no
+    authentication and would only work with ``DEBUG=True``. Only the dentist
+    or the patient on the scan's link may download it.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        scan = generics.get_object_or_404(
+            CTScan.objects.select_related('dentist_patient_link'),
+            pk=pk,
+            deleted_at__isnull=True,
+        )
+
+        link = scan.dentist_patient_link
+        dentist_profile, patient_profile = _get_role_profiles(request)
+        is_authorized = (
+            (dentist_profile and link.dentist_id == dentist_profile.pk)
+            or (patient_profile and link.patient_id == patient_profile.pk)
+        )
+        if not is_authorized:
+            raise PermissionDenied('You do not have access to this scan.')
+
+        if not scan.file:
+            raise Http404('Scan file is missing.')
+
+        try:
+            file_handle = scan.file.open('rb')
+        except FileNotFoundError as exc:
+            raise Http404('Scan file is missing on disk.') from exc
+
+        filename = os.path.basename(scan.file.name)
+        content_type, _ = mimetypes.guess_type(filename)
+        response = FileResponse(
+            file_handle,
+            as_attachment=False,
+            content_type=content_type or 'application/octet-stream',
+        )
+        response['Content-Disposition'] = (
+            f'inline; filename="{smart_str(filename)}"'
+        )
+        # Private medical data — do not let proxies/CDNs cache it.
+        response['Cache-Control'] = 'private, no-store'
+        return response
 
 
 class AIProcessingJobListView(generics.ListAPIView):

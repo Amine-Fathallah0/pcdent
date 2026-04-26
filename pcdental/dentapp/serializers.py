@@ -73,11 +73,23 @@ class AppointmentSerializer(serializers.ModelSerializer):
 class CTScanSerializer(serializers.ModelSerializer):
     patient = PatientSerializer(read_only=True)
     dentist = DentistSerializer(read_only=True)
+    # Accept the binary on upload but never echo back the raw /media/ URL.
+    file = serializers.FileField(write_only=True)
+    file_url = serializers.SerializerMethodField()
+
+    def get_file_url(self, obj):
+        if not obj.pk or not obj.file:
+            return None
+        path = f'/ct-scans/{obj.pk}/file/'
+        request = self.context.get('request')
+        if request is not None:
+            return request.build_absolute_uri(path)
+        return path
 
     class Meta:
         model = CTScan
-        fields = ["id", "dentist_patient_link", "patient", "dentist", "uploaded_by_user", "uploaded_at", "file", "description"]
-        read_only_fields = ["uploaded_at", "patient", "dentist", "uploaded_by_user"]
+        fields = ["id", "dentist_patient_link", "patient", "dentist", "uploaded_by_user", "uploaded_at", "file", "file_url", "description"]
+        read_only_fields = ["uploaded_at", "patient", "dentist", "uploaded_by_user", "file_url"]
 
 
 class AIProcessingJobSerializer(serializers.ModelSerializer):
@@ -92,14 +104,17 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
             return ''
 
     def get_scan_file_url(self, obj):
+        # Point at the authenticated streaming endpoint, never the raw
+        # /media/ URL — scans are private medical data.
         try:
-            file_field = obj.ct_scan.file
-            if not file_field:
+            scan = obj.ct_scan
+            if not scan or not scan.pk or not scan.file:
                 return None
+            path = f'/ct-scans/{scan.pk}/file/'
             request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(file_field.url)
-            return file_field.url
+            if request is not None:
+                return request.build_absolute_uri(path)
+            return path
         except Exception:
             return None
 

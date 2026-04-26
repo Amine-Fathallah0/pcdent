@@ -24,6 +24,7 @@ urlpatterns = [
     path('appointments/', views.AppointmentListCreateView.as_view(), name='appointments'),
     path('appointments/<int:pk>/', views.AppointmentDetailView.as_view(), name='appointment-detail'),
     path('ct-scans/', views.CTScanListCreateView.as_view(), name='ct-scans'),
+    path('ct-scans/<int:pk>/file/', views.CTScanFileView.as_view(), name='ct-scan-file'),
     path('jobs/', views.AIProcessingJobListView.as_view(), name='job-list'),
     path('jobs/<uuid:job_id>/', views.AIProcessingJobDetailView.as_view(), name='job-detail'),
     path('jobs/<uuid:job_id>/generate-draft/', views.AIProcessingJobGenerateDraftView.as_view(), name='job-generate-draft'),

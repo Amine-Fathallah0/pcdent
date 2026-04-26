@@ -4,3 +4,4 @@ export { useClickOutside } from './useClickOutside';
 export { useAsync } from './useAsync';
 export { useToggle, usePrevious, useMediaQuery, useKeyPress } from './useUtils';
 export { useForm } from './useForm';
+export { useAuthenticatedFileUrl } from './useAuthenticatedFileUrl';

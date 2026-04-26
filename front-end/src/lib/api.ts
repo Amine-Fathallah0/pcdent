@@ -55,7 +55,13 @@ api.interceptors.response.use(
       } catch {
         ['access_token', 'refresh_token', 'token', 'user_id', 'full_name', 'user_role', 'pcdent_user']
           .forEach((k) => localStorage.removeItem(k));
-        window.location.href = '/login';
+        // Avoid bouncing the user from public pages (landing, login, signup) when a
+        // background validation request fails. Only redirect from protected areas.
+        const path = window.location.pathname;
+        const isPublic = path === '/' || path === '/login' || path === '/signup' || path === '/register-dentist';
+        if (!isPublic) {
+          window.location.href = '/login';
+        }
         return Promise.reject(error);
       }
     }

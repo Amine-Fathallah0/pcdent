@@ -5,6 +5,7 @@ import AppointmentList from '../components/appointments/AppointmentList';
 import AppointmentScheduler from '../components/appointments/AppointmentScheduler';
 import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
+import AuthenticatedScanImage from '../components/AuthenticatedScanImage';
 import { approveLink, fetchActivePatients, fetchJobs, fetchMe, fetchMyLinks, fetchPendingLinks, generateDraft, rejectLink, reviewJob, uploadCTScan, type ActivePatientDto, type AIJobDto, type MeDto, type PendingLinkDto } from '../lib/backendApi';
 import {
   createCase,
@@ -1607,11 +1608,10 @@ const DentistDashboard = () => {
                   )}
                 </h3>
                 {imageUrl ? (
-                  <img
+                  <AuthenticatedScanImage
                     src={imageUrl}
                     alt="CT Scan"
                     style={{ width: '100%', borderRadius: 'var(--radius-md)', display: 'block', background: '#000' }}
-                    onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
                   />
                 ) : (
                   <div style={{ width: '100%', aspectRatio: '1', background: '#0F172A', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 'var(--space-12)' }}>
