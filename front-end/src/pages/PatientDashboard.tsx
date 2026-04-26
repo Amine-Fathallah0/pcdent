@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import AppointmentList from '../components/appointments/AppointmentList';
 import AppointmentScheduler from '../components/appointments/AppointmentScheduler';
@@ -8,7 +9,7 @@ import FullReportModal from '../components/FullReportModal';
 import TextType from '../components/ui/TextType';
 import AnimatedList from '../components/ui/AnimatedList';
 import { Icon } from '../components/ui';
-import { fetchJobs, fetchMyLinks, generateDraft, uploadCTScan, type AIJobDto } from '../lib/backendApi';
+import { fetchJobs, fetchMyLinks, generateDraft, requestDentistLink, uploadCTScan, type AIJobDto } from '../lib/backendApi';
 import { 
   database, 
   createCase,
@@ -28,9 +29,6 @@ import {
 } from '../data/database';
 import './PatientDashboard.css';
 
-// Current patient ID (would come from auth in real app)
-const CURRENT_PATIENT_ID = 'patient-001';
-const CURRENT_PATIENT_NAME = 'John Smith';
 
 // File validation constants
 const VALID_FILE_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'application/dicom'] as const;
@@ -121,6 +119,10 @@ const DashboardActionButton = ({ icon, title, description, onClick }: DashboardA
 );
 
 const PatientDashboard = () => {
+  const { user } = useAuth();
+  const CURRENT_PATIENT_ID = user?.id ?? '';
+  const CURRENT_PATIENT_NAME = user?.name ?? '';
+
   const [activeView, setActiveView] = useState('patient-dashboard');
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -136,6 +138,11 @@ const PatientDashboard = () => {
   const [refreshKey, setRefreshKey] = useState(0); // Triggers backend data refresh after local updates
   const [backendJobs, setBackendJobs] = useState<AIJobDto[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Connect-to-dentist state
+  const [connectCode, setConnectCode] = useState('');
+  const [connectStatus, setConnectStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [connectMessage, setConnectMessage] = useState('');
 
   const loadBackendJobs = useCallback(async () => {
     try {
@@ -433,67 +440,8 @@ const PatientDashboard = () => {
   };
 
   const recentActivityEntries = useMemo(() => {
-    const staticEntries = [
-      {
-        id: 'demo-1',
-        date: 'Jan 24, 2026',
-        title: 'Panoramic X-Ray',
-        description: '2 finding(s) detected',
-        status: 'Needs Review',
-      },
-      {
-        id: 'demo-2',
-        date: 'Jan 22, 2026',
-        title: 'Panoramic X-Ray',
-        description: '1 finding(s) detected',
-        status: 'Finalized',
-      },
-      {
-        id: 'demo-3',
-        date: 'Jan 20, 2026',
-        title: 'Panoramic X-Ray',
-        description: '1 finding(s) detected',
-        status: 'Results Sent',
-      },
-      {
-        id: 'demo-4',
-        date: 'Jan 18, 2026',
-        title: 'Bitewing Scan',
-        description: '3 finding(s) detected',
-        status: 'Needs Review',
-      },
-      {
-        id: 'demo-5',
-        date: 'Jan 15, 2026',
-        title: 'Periapical Scan',
-        description: 'No urgent flags',
-        status: 'Finalized',
-      },
-      {
-        id: 'demo-6',
-        date: 'Jan 12, 2026',
-        title: 'Panoramic X-Ray',
-        description: '2 finding(s) detected',
-        status: 'Reviewed by Dentist',
-      },
-      {
-        id: 'demo-7',
-        date: 'Jan 9, 2026',
-        title: 'Panoramic X-Ray',
-        description: '1 finding(s) detected',
-        status: 'Finalized',
-      },
-      {
-        id: 'demo-8',
-        date: 'Jan 6, 2026',
-        title: 'Bitewing Scan',
-        description: '2 finding(s) detected',
-        status: 'Results Sent',
-      },
-    ];
-
     if (backendJobs.length > 0) {
-      const dynamicEntries = [...backendJobs]
+      return [...backendJobs]
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 6)
         .map((job) => ({
@@ -503,11 +451,9 @@ const PatientDashboard = () => {
           description: job.is_fallback_mode ? 'Fallback analysis pipeline' : 'Standard analysis pipeline',
           status: getBackendJobStatusLabel(job.status),
         }));
-
-      return [...dynamicEntries, ...staticEntries];
     }
 
-    const dynamicEntries = [...patientCases]
+    return [...patientCases]
       .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
       .slice(0, 6)
       .map((caseItem) => ({
@@ -517,14 +463,29 @@ const PatientDashboard = () => {
         description: `${caseItem.aiFindings.length} finding(s) detected`,
         status: getStatusLabel(caseItem.status),
       }));
-
-      return [...dynamicEntries, ...staticEntries];
   }, [backendJobs, patientCases]);
 
   const recentActivityItems = useMemo(
     () => recentActivityEntries.map((entry) => `${entry.date} - ${entry.title}`),
     [recentActivityEntries]
   );
+
+  const handleConnectRequest = async () => {
+    const code = connectCode.trim().toUpperCase();
+    if (!code) return;
+    setConnectStatus('loading');
+    setConnectMessage('');
+    try {
+      await requestDentistLink(code);
+      setConnectStatus('success');
+      setConnectMessage('Request sent! Your dentist will approve the connection.');
+      setConnectCode('');
+    } catch (error: unknown) {
+      setConnectStatus('error');
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setConnectMessage(detail ?? 'Failed to send request. Check the code and try again.');
+    }
+  };
 
   const renderContent = () => {
     switch (activeView) {
@@ -720,6 +681,37 @@ const PatientDashboard = () => {
                     <Icon name="message-circle" />
                     Open Chat
                   </button>
+                </article>
+
+                <article className="card patient-right-card" style={{ marginTop: 'var(--space-16)' }}>
+                  <h3 className="patient-right-card__title">Connect to a dentist</h3>
+                  <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-12)' }}>
+                    Ask your dentist for their <strong>DR-XXXX</strong> code and enter it below.
+                  </p>
+                  <div style={{ display: 'flex', gap: 'var(--space-8)', marginBottom: 'var(--space-8)' }}>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="DR-XXXX"
+                      value={connectCode}
+                      maxLength={7}
+                      onChange={e => { setConnectCode(e.target.value.toUpperCase()); setConnectStatus('idle'); setConnectMessage(''); }}
+                      onKeyDown={e => { if (e.key === 'Enter') void handleConnectRequest(); }}
+                      style={{ fontFamily: 'monospace', letterSpacing: '2px', textTransform: 'uppercase' }}
+                    />
+                    <button
+                      className="btn btn--primary btn--sm"
+                      onClick={() => void handleConnectRequest()}
+                      disabled={connectStatus === 'loading' || !connectCode.trim()}
+                    >
+                      {connectStatus === 'loading' ? '…' : 'Send'}
+                    </button>
+                  </div>
+                  {connectMessage && (
+                    <p style={{ fontSize: 'var(--font-size-sm)', color: connectStatus === 'success' ? '#10B981' : '#EF4444', marginTop: 'var(--space-4)' }}>
+                      {connectMessage}
+                    </p>
+                  )}
                 </article>
               </aside>
             </div>

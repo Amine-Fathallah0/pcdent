@@ -1,16 +1,16 @@
 import { useState, useRef, useCallback, useEffect, useMemo, type JSX } from 'react';
+import { useAuth } from '../context/AuthContext';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import AppointmentList from '../components/appointments/AppointmentList';
 import AppointmentScheduler from '../components/appointments/AppointmentScheduler';
 import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
-import { fetchJobs, fetchMyLinks, generateDraft, reviewJob, uploadCTScan, type AIJobDto } from '../lib/backendApi';
+import { approveLink, fetchActivePatients, fetchJobs, fetchMe, fetchMyLinks, fetchPendingLinks, generateDraft, rejectLink, reviewJob, uploadCTScan, type ActivePatientDto, type AIJobDto, type MeDto, type PendingLinkDto } from '../lib/backendApi';
 import {
   createCase,
   database,
   getCasesByDentist,
   getPatientsByDentist,
-  getPendingRequestsByDentist,
   getAppointmentsByDentist,
   getUpcomingAppointments,
   getTodaysAppointments,
@@ -22,12 +22,9 @@ import {
   getStatusLabel,
   getStatusClass,
   type Case,
-  type AssignmentRequest,
   type Appointment
 } from '../data/database';
 
-// Current dentist ID (would come from auth in real app)
-const CURRENT_DENTIST_ID = 'dentist-001';
 
 // Better icons with improved styling
 const icons: Record<string, JSX.Element> = {
@@ -83,6 +80,23 @@ const mapBackendStatusToInboxTab = (status: AIJobDto['status']): InboxTab => {
       return 'finalized';
     default:
       return 'new-uploads';
+  }
+};
+
+const getBackendJobStatusClass = (status: AIJobDto['status']): string => {
+  switch (status) {
+    case 'queued':
+    case 'segmentation_pending':
+    case 'report_requested':
+      return 'uploaded';
+    case 'draft_ready':
+    case 'failed':
+      return 'needs-review';
+    case 'dentist_reviewed':
+    case 'finalized':
+      return 'finalized';
+    default:
+      return 'uploaded';
   }
 };
 
@@ -305,11 +319,14 @@ const CaseReviewModal = ({
 };
 
 const DentistDashboard = () => {
-  const currentDentistId = localStorage.getItem('user_id') || CURRENT_DENTIST_ID;
-  const currentDentistName = localStorage.getItem('full_name') || database.dentistProfile.name;
+  const { user } = useAuth();
+  const currentDentistId = user?.id ?? '';
+  const currentDentistName = user?.name ?? '';
   const [activeView, setActiveView] = useState('dentist-dashboard');
   const [activeInboxTab, setActiveInboxTab] = useState<InboxTab>('new-uploads');
-  const [inboxDataSource, setInboxDataSource] = useState<'mock' | 'backend'>('mock');
+  const [reviewingJob, setReviewingJob] = useState<AIJobDto | null>(null);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [jobActionLoading, setJobActionLoading] = useState(false);
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
@@ -324,14 +341,16 @@ const DentistDashboard = () => {
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'processing' | 'complete' | 'error'>('idle');
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedPatientForUpload, setSelectedPatientForUpload] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Profile editing state
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [meData, setMeData] = useState<MeDto | null>(null);
   const [profileForm, setProfileForm] = useState({
-    name: database.dentistProfile.name,
+    name: currentDentistName || database.dentistProfile.name,
     email: database.dentistProfile.email,
     phone: database.dentistProfile.phone,
     clinic: database.dentistProfile.clinic,
@@ -340,15 +359,32 @@ const DentistDashboard = () => {
     availability: database.dentistProfile.availability
   });
   
-  // Pending requests state (dynamic management)
-  const [pendingRequestsState, setPendingRequestsState] = useState<AssignmentRequest[]>(
-    getPendingRequestsByDentist(currentDentistId)
-  );
-  const [requestInfoModal, setRequestInfoModal] = useState<{ show: boolean; request: AssignmentRequest | null; message: string }>({
-    show: false,
-    request: null,
-    message: ''
-  });
+  // Pending requests — real backend data
+  const [pendingRequestsState, setPendingRequestsState] = useState<PendingLinkDto[]>([]);
+  const [activePatients, setActivePatients] = useState<ActivePatientDto[]>([]);
+
+  const loadPendingLinks = useCallback(async () => {
+    try {
+      const links = await fetchPendingLinks();
+      setPendingRequestsState(links);
+    } catch {
+      // non-dentist accounts will get 403 — silently ignore
+    }
+  }, []);
+
+  const loadActivePatients = useCallback(async () => {
+    try {
+      const patients = await fetchActivePatients();
+      setActivePatients(patients);
+    } catch {
+      // silently ignore for non-dentist accounts
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPendingLinks();
+    void loadActivePatients();
+  }, [loadPendingLinks, loadActivePatients]);
   
   // Clinical Charting State
   const [selectedChartingPatient, setSelectedChartingPatient] = useState<string>('');
@@ -383,6 +419,19 @@ const DentistDashboard = () => {
   }, [loadJobs, refreshKey]);
 
   useEffect(() => {
+    fetchMe().then(data => {
+      setMeData(data);
+      setProfileForm(prev => ({
+        ...prev,
+        name: data.full_name,
+        email: data.email,
+        phone: data.contact_number ?? prev.phone,
+        address: data.location ?? prev.address,
+      }));
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (activeView !== 'dentist-inbox') {
       return;
     }
@@ -396,6 +445,13 @@ const DentistDashboard = () => {
       window.clearInterval(intervalId);
     };
   }, [activeView, loadJobs]);
+
+  useEffect(() => {
+    if (activeView === 'dentist-patients' || activeView === 'dentist-pending') {
+      void loadActivePatients();
+      void loadPendingLinks();
+    }
+  }, [activeView, loadActivePatients, loadPendingLinks]);
 
   // Get dynamic data from database
   const dentistCases = getCasesByDentist(currentDentistId);
@@ -505,19 +561,18 @@ const DentistDashboard = () => {
       return;
     }
 
-    const patient = myPatients.find(p => p.id === selectedPatientForUpload);
+    // selectedPatientForUpload holds the link id (from activePatients)
+    setUploadError(null);
+    const linkId = Number(selectedPatientForUpload);
+    const patient = activePatients.find(p => p.id === linkId);
     if (!patient) return;
 
     setUploadStatus('uploading');
     setUploadProgress(0);
 
-    // Simulate upload progress
     const uploadInterval = setInterval(() => {
       setUploadProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(uploadInterval);
-          return 100;
-        }
+        if (prev >= 100) { clearInterval(uploadInterval); return 100; }
         return prev + 10;
       });
     }, 150);
@@ -525,61 +580,14 @@ const DentistDashboard = () => {
     await new Promise(resolve => setTimeout(resolve, 1500));
     clearInterval(uploadInterval);
     setUploadProgress(100);
-
     setUploadStatus('processing');
 
     try {
-      const links = await fetchMyLinks();
-      const activeLink = links.find((link) => link.patient === patient.id) || links[0];
-
-      if (!activeLink) {
-        // Keep mock workflow usable when backend links are not available yet.
-        const fallbackCase = createCase(
-          patient.id,
-          patient.name,
-          patient.email,
-          currentDentistId,
-          null
-        );
-        fallbackCase.status = 'AI_ANALYZED';
-        fallbackCase.aiAnalyzedAt = new Date().toISOString();
-
-        setUploadStatus('complete');
-        setRefreshKey(prev => prev + 1);
-        setActionFeedback({ type: 'info', message: 'Saved to mock cases only (no backend dentist-patient link found).' });
-        setTimeout(() => setActionFeedback(null), 5000);
-
-        setTimeout(() => {
-          setUploadedFile(null);
-          setUploadPreview(null);
-          setUploadProgress(0);
-          setUploadStatus('idle');
-          setSelectedPatientForUpload('');
-          setActiveView('dentist-inbox');
-        }, 2000);
-        return;
-      }
-
       const uploaded = await uploadCTScan(
-        activeLink.id,
+        linkId,
         uploadedFile,
-        `Dentist upload for ${patient.name}: ${uploadedFile.name}`
+        `Dentist upload for ${patient.patient_name}: ${uploadedFile.name}`
       );
-
-      const createdCase = createCase(
-        patient.id,
-        patient.name,
-        patient.email,
-        currentDentistId,
-        null,
-        {
-          backendJobId: uploaded.job.job_id,
-          ctScanId: uploaded.scan.id,
-        }
-      );
-
-      createdCase.status = 'AI_ANALYZED';
-      createdCase.aiAnalyzedAt = new Date().toISOString();
 
       await generateDraft(uploaded.job.job_id);
 
@@ -603,11 +611,21 @@ const DentistDashboard = () => {
         setSelectedPatientForUpload('');
         setActiveView('dentist-inbox');
       }, 2000);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(error);
+      const axiosErr = error as { response?: { data?: Record<string, unknown> } };
+      const data = axiosErr?.response?.data;
+      let msg = 'Upload failed.';
+      if (data) {
+        const first = Object.values(data)[0];
+        if (Array.isArray(first)) msg = String(first[0]);
+        else if (typeof first === 'string') msg = first;
+        else msg = JSON.stringify(data);
+      }
+      setUploadError(msg);
       setUploadStatus('error');
     }
-  }, [uploadedFile, selectedPatientForUpload, myPatients, currentDentistId]);
+  }, [uploadedFile, selectedPatientForUpload, activePatients, currentDentistId]);
 
   // Clear upload
   const clearUpload = useCallback(() => {
@@ -621,7 +639,7 @@ const DentistDashboard = () => {
   }, []);
 
   // Calculate stats
-  const totalPatients = myPatients.length;
+  const totalPatients = activePatients.length;
   const highRiskAlerts = resolvedDentistCases.filter(c => c.aiFindings.some(f => f.urgency === 'high') && c.status !== 'SENT_TO_PATIENT').length;
   const casesThisMonth = resolvedDentistCases.filter(c => {
     const caseDate = new Date(c.uploadedAt);
@@ -667,32 +685,60 @@ const DentistDashboard = () => {
   };
 
   // Pending request handlers
-  const handleAcceptPatient = (requestId: string) => {
-    setPendingRequestsState(prev => prev.filter(r => r.id !== requestId));
-    setActionFeedback({ type: 'success', message: 'Patient accepted successfully! They will be notified.' });
+  const handleAcceptPatient = async (requestId: string) => {
+    try {
+      await approveLink(Number(requestId));
+      setPendingRequestsState(prev => prev.filter(r => String(r.id) !== requestId));
+      void loadActivePatients();
+      setActionFeedback({ type: 'success', message: 'Patient accepted successfully!' });
+    } catch {
+      setActionFeedback({ type: 'error', message: 'Failed to accept patient. Please try again.' });
+    }
     setTimeout(() => setActionFeedback(null), 4000);
   };
 
-  const handleRejectPatient = (requestId: string) => {
-    setPendingRequestsState(prev => prev.filter(r => r.id !== requestId));
-    setActionFeedback({ type: 'info', message: 'Patient request has been declined.' });
+  const handleRejectPatient = async (requestId: string) => {
+    try {
+      await rejectLink(Number(requestId));
+      setPendingRequestsState(prev => prev.filter(r => String(r.id) !== requestId));
+      setActionFeedback({ type: 'info', message: 'Patient request has been declined.' });
+    } catch {
+      setActionFeedback({ type: 'error', message: 'Failed to decline request. Please try again.' });
+    }
     setTimeout(() => setActionFeedback(null), 4000);
   };
 
-  const handleRequestInfo = (request: AssignmentRequest) => {
-    setRequestInfoModal({ show: true, request, message: '' });
+
+  // Backend job action handlers
+  const handleGenerateDraftForJob = async (job: AIJobDto) => {
+    setJobActionLoading(true);
+    try {
+      const updated = await generateDraft(job.job_id);
+      setRefreshKey(prev => prev + 1);
+      setReviewingJob(updated);
+      setActionFeedback({ type: 'success', message: 'Draft report generated. You can now review it.' });
+    } catch {
+      setActionFeedback({ type: 'error', message: 'Failed to generate draft. Please try again.' });
+    } finally {
+      setJobActionLoading(false);
+      setTimeout(() => setActionFeedback(null), 4000);
+    }
   };
 
-  const sendInfoRequest = () => {
-    if (requestInfoModal.request && requestInfoModal.message.trim()) {
-      // Update request status to show info was requested
-      setPendingRequestsState(prev => prev.map(r => 
-        r.id === requestInfoModal.request!.id 
-          ? { ...r, additionalInfo: 'Info requested: ' + requestInfoModal.message }
-          : r
-      ));
-      setRequestInfoModal({ show: false, request: null, message: '' });
-      setActionFeedback({ type: 'info', message: 'Information request sent to patient.' });
+  const handleReviewJobAction = async (decision: 'reviewed' | 'finalized') => {
+    if (!reviewingJob) return;
+    setJobActionLoading(true);
+    try {
+      const updated = await reviewJob(reviewingJob.job_id, decision, reviewNotes);
+      setRefreshKey(prev => prev + 1);
+      setReviewingJob(updated);
+      setReviewNotes(updated.dentist_notes || '');
+      setActionFeedback({ type: 'success', message: decision === 'finalized' ? 'Report finalized successfully.' : 'Report marked as reviewed.' });
+      if (decision === 'finalized') setActiveView('dentist-inbox');
+    } catch {
+      setActionFeedback({ type: 'error', message: 'Failed to save review. Please try again.' });
+    } finally {
+      setJobActionLoading(false);
       setTimeout(() => setActionFeedback(null), 4000);
     }
   };
@@ -716,12 +762,12 @@ const DentistDashboard = () => {
 
   const handleProfileCancel = () => {
     setProfileForm({
-      name: database.dentistProfile.name,
-      email: database.dentistProfile.email,
-      phone: database.dentistProfile.phone,
+      name: meData?.full_name ?? currentDentistName ?? database.dentistProfile.name,
+      email: meData?.email ?? database.dentistProfile.email,
+      phone: meData?.contact_number ?? database.dentistProfile.phone,
       clinic: database.dentistProfile.clinic,
       specialization: database.dentistProfile.specialization,
-      address: database.dentistProfile.address,
+      address: meData?.location ?? database.dentistProfile.address,
       availability: database.dentistProfile.availability
     });
     setIsEditingProfile(false);
@@ -1330,110 +1376,116 @@ const DentistDashboard = () => {
             </div>
 
             <div className="inbox-content">
-              <div className="card" style={{ marginBottom: 'var(--space-16)' }}>
-                <div
-                  className="card-header"
-                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-12)', flexWrap: 'wrap' }}
-                >
-                  <div>
-                    <h3 className="card-title" style={{ marginBottom: 'var(--space-8)' }}>Inbox Data Source</h3>
-                    <div style={{ display: 'inline-flex', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
-                      <button
-                        className="btn btn--sm"
-                        onClick={() => setInboxDataSource('mock')}
-                        style={{
-                          border: 'none',
-                          borderRadius: 'var(--radius-md) 0 0 var(--radius-md)',
-                          background: inboxDataSource === 'mock' ? 'var(--color-primary)' : 'transparent',
-                          color: inboxDataSource === 'mock' ? '#FFFFFF' : 'var(--color-text)'
-                        }}
-                      >
-                        Mock Cases
-                      </button>
-                      <button
-                        className="btn btn--sm"
-                        onClick={() => setInboxDataSource('backend')}
-                        style={{
-                          border: 'none',
-                          borderLeft: '1px solid var(--color-border)',
-                          borderRadius: '0 var(--radius-md) var(--radius-md) 0',
-                          background: inboxDataSource === 'backend' ? 'var(--color-primary)' : 'transparent',
-                          color: inboxDataSource === 'backend' ? '#FFFFFF' : 'var(--color-text)'
-                        }}
-                      >
-                        Backend Jobs
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    className="btn btn--outline btn--sm"
-                    onClick={() => setRefreshKey(prev => prev + 1)}
-                  >
-                    Refresh
-                  </button>
-                </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-16)' }}>
+                <button className="btn btn--outline btn--sm" onClick={() => setRefreshKey(prev => prev + 1)}>
+                  <Icon name="activity" /> Refresh
+                </button>
               </div>
 
-              {inboxDataSource === 'backend' ? (
-                backendJobsLoading ? (
-                  <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
-                    <h3>Loading backend jobs...</h3>
-                  </div>
-                ) : backendJobsError ? (
-                  <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
-                    <h3 style={{ color: '#B91C1C' }}>Unable to load backend jobs</h3>
-                    <p>{backendJobsError}</p>
-                  </div>
-                ) : getCurrentTabJobs().length > 0 ? (
-                  <div className="case-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: 'var(--space-16)' }}>
-                    {getCurrentTabJobs().map(job => (
-                      <div className="case-card card" key={job.job_id}>
-                        <div className="case-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-12)' }}>
+              {backendJobsLoading ? (
+                <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+                  <h3>Loading cases...</h3>
+                </div>
+              ) : backendJobsError ? (
+                <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+                  <h3 style={{ color: '#B91C1C' }}>Unable to load cases</h3>
+                  <p>{backendJobsError}</p>
+                </div>
+              ) : getCurrentTabJobs().length > 0 ? (
+                <div className="case-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 'var(--space-16)' }}>
+                  {getCurrentTabJobs().map(job => (
+                    <div className="case-card card" key={job.job_id} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-12)' }}>
+                      {/* Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
+                          <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--color-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'var(--font-weight-bold)', fontSize: 'var(--font-size-lg)' }}>
+                            {job.patient_name ? job.patient_name.split(' ').map((n: string) => n[0]).join('') : '?'}
+                          </div>
                           <div>
-                            <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>Backend Job</div>
-                            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                              {job.job_id.slice(0, 12)}...
-                            </div>
-                          </div>
-                          <span className="status-badge">{getBackendJobStatusLabel(job.status)}</span>
-                        </div>
-
-                        <div style={{ display: 'grid', gap: 'var(--space-8)', marginBottom: 'var(--space-12)' }}>
-                          <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                            CT Scan ID: {job.ct_scan_id}
-                          </div>
-                          <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                            Created: {formatDate(job.created_at)}
-                          </div>
-                          <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                            Fallback Mode: {job.is_fallback_mode ? 'Yes' : 'No'}
+                            <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>{job.patient_name || 'Unknown Patient'}</div>
+                            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>Scan #{job.ct_scan_id} · {formatDate(job.created_at)}</div>
                           </div>
                         </div>
-
-                        <div style={{
-                          fontSize: 'var(--font-size-sm)',
-                          padding: 'var(--space-10)',
-                          background: 'var(--color-bg-1)',
-                          borderRadius: 'var(--radius-md)',
-                          color: 'var(--color-text-secondary)',
-                          minHeight: '72px'
-                        }}>
-                          {job.draft_report
-                            ? `${job.draft_report.slice(0, 140)}${job.draft_report.length > 140 ? '...' : ''}`
-                            : 'No draft text available yet for this job.'}
-                        </div>
+                        <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-xs)', padding: '4px 10px', borderRadius: '12px', whiteSpace: 'nowrap' }}>
+                          {getBackendJobStatusLabel(job.status)}
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
-                    <Icon name="check-circle" />
-                    <h3>All Caught Up!</h3>
-                    <p>No backend jobs in this category.</p>
-                  </div>
-                )
-              ) : getCurrentTabCases().length > 0 ? (
+
+                      {/* Draft report preview */}
+                      {job.draft_report && (
+                        <div style={{ fontSize: 'var(--font-size-sm)', padding: 'var(--space-10)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', lineHeight: '1.5' }}>
+                          {job.draft_report.slice(0, 180)}{job.draft_report.length > 180 ? '…' : ''}
+                        </div>
+                      )}
+
+                      {/* Actions */}
+                      <div style={{ display: 'flex', gap: 'var(--space-8)', marginTop: 'auto' }}>
+                        {(job.status === 'segmentation_pending' || job.status === 'queued' || job.status === 'report_requested') && (
+                          <button
+                            className="btn btn--primary btn--sm btn--full"
+                            onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                            disabled={jobActionLoading}
+                          >
+                            <Icon name="file-text" /> Open Case
+                          </button>
+                        )}
+                        {job.status === 'draft_ready' && (
+                          <button
+                            className="btn btn--primary btn--sm btn--full"
+                            onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                          >
+                            <Icon name="eye" /> Review Report
+                          </button>
+                        )}
+                        {job.status === 'dentist_reviewed' && (
+                          <>
+                            <button
+                              className="btn btn--outline btn--sm"
+                              style={{ flex: 1 }}
+                              onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                            >
+                              <Icon name="eye" /> View
+                            </button>
+                            <button
+                              className="btn btn--primary btn--sm"
+                              style={{ flex: 1 }}
+                              onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                            >
+                              <Icon name="check-circle" /> Finalize
+                            </button>
+                          </>
+                        )}
+                        {job.status === 'finalized' && (
+                          <button
+                            className="btn btn--outline btn--sm btn--full"
+                            onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                          >
+                            <Icon name="file-text" /> View Report
+                          </button>
+                        )}
+                        {job.status === 'failed' && (
+                          <button
+                            className="btn btn--outline btn--sm btn--full"
+                            onClick={() => void handleGenerateDraftForJob(job)}
+                            disabled={jobActionLoading}
+                          >
+                            <Icon name="activity" /> Retry
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+                  <Icon name="check-circle" />
+                  <h3>All Caught Up!</h3>
+                  <p>No cases in this category.</p>
+                </div>
+              )}
+
+              {/* kept for legacy mock cases — hidden but not deleted */}
+              {false && getCurrentTabCases().length > 0 ? (
                 <div className="case-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: 'var(--space-16)' }}>
                   {getCurrentTabCases().map(caseItem => (
                     <div className={`case-card card ${caseItem.aiFindings.some(f => f.urgency === 'high') ? 'has-urgent' : ''}`} key={caseItem.id} style={{
@@ -1506,8 +1558,148 @@ const DentistDashboard = () => {
                 </div>
               )}
             </div>
+
           </>
         );
+
+      // ============== CASE DETAIL ==============
+      case 'case-detail': {
+        if (!reviewingJob) { setActiveView('dentist-inbox'); return null; }
+        const job = reviewingJob;
+        const imageUrl = job.annotated_image_url || job.scan_file_url;
+        const isFinalized = job.status === 'finalized';
+        const canGenerate = job.status === 'queued' || job.status === 'segmentation_pending' || job.status === 'report_requested';
+        return (
+          <>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-16)', marginBottom: 'var(--space-24)' }}>
+              <button className="btn btn--outline btn--sm" onClick={() => { setActiveView('dentist-inbox'); setReviewingJob(null); setReviewNotes(''); }}>
+                <Icon name="arrow-left" /> Back to Inbox
+              </button>
+              <div style={{ flex: 1 }}>
+                <h2 style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 'var(--font-weight-bold)', margin: 0 }}>
+                  {job.patient_name || 'Unknown Patient'} — Scan #{job.ct_scan_id}
+                </h2>
+                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                  Uploaded {formatDate(job.created_at)}
+                </div>
+              </div>
+              <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-sm)', padding: '6px 14px' }}>
+                {getBackendJobStatusLabel(job.status)}
+              </span>
+            </div>
+
+            {actionFeedback && (
+              <div className={`alert ${actionFeedback.type}`} style={{ marginBottom: 'var(--space-16)' }}>
+                {actionFeedback.message}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-24)', alignItems: 'start' }}>
+              {/* LEFT — Scan viewer */}
+              <div className="card" style={{ padding: 'var(--space-20)' }}>
+                <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-16)' }}>
+                  CT Scan
+                  {job.annotated_image_url && (
+                    <span style={{ marginLeft: 'var(--space-8)', fontSize: 'var(--font-size-xs)', color: '#047857', background: '#D1FAE5', padding: '2px 8px', borderRadius: '12px' }}>
+                      AI Annotated
+                    </span>
+                  )}
+                </h3>
+                {imageUrl ? (
+                  <img
+                    src={imageUrl}
+                    alt="CT Scan"
+                    style={{ width: '100%', borderRadius: 'var(--radius-md)', display: 'block', background: '#000' }}
+                    onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
+                ) : (
+                  <div style={{ width: '100%', aspectRatio: '1', background: '#0F172A', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 'var(--space-12)' }}>
+                    <Icon name="activity" />
+                    <div style={{ fontSize: 'var(--font-size-sm)', textAlign: 'center', maxWidth: '200px', lineHeight: 1.5 }}>
+                      AI segmentation overlay will appear here once the model is integrated.
+                    </div>
+                  </div>
+                )}
+                {!job.annotated_image_url && imageUrl && (
+                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginTop: 'var(--space-8)', textAlign: 'center' }}>
+                    Showing original scan. AI segmentation overlay coming soon.
+                  </p>
+                )}
+              </div>
+
+              {/* RIGHT — Report */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-16)' }}>
+                {canGenerate && (
+                  <button
+                    className="btn btn--primary btn--full"
+                    onClick={() => void handleGenerateDraftForJob(job)}
+                    disabled={jobActionLoading}
+                    style={{ fontSize: 'var(--font-size-base)' }}
+                  >
+                    <Icon name="file-text" /> {jobActionLoading ? 'Generating…' : 'Generate AI Report'}
+                  </button>
+                )}
+
+                <div className="card" style={{ padding: 'var(--space-20)' }}>
+                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>AI Draft Report</h3>
+                  {job.draft_report ? (
+                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.8', color: 'var(--color-text)', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', maxHeight: '260px', overflowY: 'auto' }}>
+                      {job.draft_report}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
+                      {canGenerate ? 'Click "Generate AI Report" above to create the draft.' : 'No draft report available.'}
+                    </p>
+                  )}
+                </div>
+
+                <div className="card" style={{ padding: 'var(--space-20)' }}>
+                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
+                    Dentist Notes
+                    {!isFinalized && <span style={{ marginLeft: 'var(--space-8)', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', fontWeight: 'normal' }}>(optional)</span>}
+                  </h3>
+                  {isFinalized ? (
+                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.7', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', color: 'var(--color-text)' }}>
+                      {job.dentist_notes || '—'}
+                    </div>
+                  ) : (
+                    <textarea
+                      value={reviewNotes}
+                      onChange={e => setReviewNotes(e.target.value)}
+                      placeholder="Add clinical observations, corrections, or recommendations…"
+                      style={{ width: '100%', minHeight: '120px', padding: 'var(--space-12)', borderRadius: 'var(--radius-md)', border: '2px solid var(--color-border)', fontSize: 'var(--font-size-sm)', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                    />
+                  )}
+                </div>
+
+                {!isFinalized && (
+                  <div style={{ display: 'flex', gap: 'var(--space-12)' }}>
+                    {job.status === 'draft_ready' && (
+                      <button className="btn btn--outline" style={{ flex: 1 }} onClick={() => void handleReviewJobAction('reviewed')} disabled={jobActionLoading}>
+                        <Icon name="check" /> Mark Reviewed
+                      </button>
+                    )}
+                    <button
+                      className="btn btn--primary"
+                      style={{ flex: 1 }}
+                      onClick={() => void handleReviewJobAction('finalized')}
+                      disabled={jobActionLoading || canGenerate}
+                    >
+                      <Icon name="check-circle" /> {jobActionLoading ? 'Saving…' : 'Finalize Report'}
+                    </button>
+                  </div>
+                )}
+                {isFinalized && (
+                  <div style={{ padding: 'var(--space-12)', background: '#D1FAE5', color: '#047857', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)', display: 'flex', alignItems: 'center', gap: 'var(--space-8)' }}>
+                    <Icon name="check-circle" /> Report finalized on {job.completed_at ? formatDate(job.completed_at) : '—'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        );
+      }
 
       // ============== DENTIST UPLOAD (Panoramic Only) ==============
       case 'dentist-upload':
@@ -1567,8 +1759,8 @@ const DentistDashboard = () => {
                 onChange={(e) => setSelectedPatientForUpload(e.target.value)}
               >
                 <option value="">-- Select Patient --</option>
-                {myPatients.map(p => (
-                        <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
+                {activePatients.map(p => (
+                  <option key={p.id} value={String(p.id)}>{p.patient_name} ({p.patient_email})</option>
                 ))}
               </select>
               {!selectedPatientForUpload && uploadedFile && (
@@ -1702,7 +1894,7 @@ const DentistDashboard = () => {
                           borderRadius: 'var(--radius-sm)'
                         }}>
                           <Icon name="users" />
-                          <span>{myPatients.find(p => p.id === selectedPatientForUpload)?.name}</span>
+                          <span>{activePatients.find(p => String(p.id) === selectedPatientForUpload)?.patient_name}</span>
                         </div>
                       )}
                       
@@ -1764,11 +1956,25 @@ const DentistDashboard = () => {
                           <Icon name="check-circle" /> Ready to upload
                         </span>
                       )}
+                      {uploadStatus === 'error' && (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '4px 12px',
+                          background: '#FEE2E2',
+                          color: '#B91C1C',
+                          borderRadius: 'var(--radius-md)',
+                          fontSize: 'var(--font-size-sm)'
+                        }}>
+                          <Icon name="x" /> {uploadError ?? 'Upload failed'}
+                        </span>
+                      )}
                     </div>
                   </div>
 
                   <div style={{ display: 'flex', gap: 'var(--space-12)' }}>
-                    {uploadStatus === 'idle' && (
+                    {(uploadStatus === 'idle' || uploadStatus === 'error') && (
                       <>
                         <button 
                           className="btn btn--primary" 
@@ -1865,17 +2071,17 @@ const DentistDashboard = () => {
                           fontSize: 'var(--font-size-lg)',
                           boxShadow: '0 2px 8px rgba(245, 158, 11, 0.2)'
                         }}>
-                          {request.patientName.split(' ').map(n => n[0]).join('')}
+                          {request.patient_name.split(' ').map((n: string) => n[0]).join('')}
                         </div>
                         <div className="pending-patient-info" style={{ flex: 1 }}>
-                          <div className="patient-name" style={{ fontWeight: 'var(--font-weight-semibold)', fontSize: 'var(--font-size-lg)', marginBottom: 'var(--space-4)' }}>{request.patientName}</div>
+                          <div className="patient-name" style={{ fontWeight: 'var(--font-weight-semibold)', fontSize: 'var(--font-size-lg)', marginBottom: 'var(--space-4)' }}>{request.patient_name}</div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-8)', marginBottom: 'var(--space-4)' }}>
                             <Icon name="mail" />
-                            <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{request.patientEmail}</span>
+                            <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{request.patient_email}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-8)' }}>
                             <Icon name="calendar" />
-                            <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>Requested: {request.requestedAt}</span>
+                            <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>Requested: {formatDate(request.connected_at)}</span>
                           </div>
                         </div>
                         <span className="status-badge pending" style={{ 
@@ -1893,57 +2099,17 @@ const DentistDashboard = () => {
                         </span>
                       </div>
                       
-                      {request.message && (
-                        <div className="patient-message" style={{ 
-                          background: 'var(--color-bg-1)', 
-                          padding: 'var(--space-16)', 
-                          borderRadius: 'var(--radius-md)',
-                          marginBottom: 'var(--space-16)',
-                          borderLeft: '3px solid var(--color-primary)'
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-8)', marginBottom: 'var(--space-8)' }}>
-                            <Icon name="message-circle" />
-                            <strong style={{ fontSize: 'var(--font-size-sm)' }}>Message from patient:</strong>
-                          </div>
-                          <p style={{ margin: 0, color: 'var(--color-text-secondary)', lineHeight: '1.5' }}>{request.message}</p>
-                        </div>
-                      )}
-
-                      {request.additionalInfo && (
-                        <div style={{ 
-                          background: '#DBEAFE', 
-                          padding: 'var(--space-12)', 
-                          borderRadius: 'var(--radius-md)',
-                          marginBottom: 'var(--space-16)',
-                          fontSize: 'var(--font-size-sm)',
-                          color: '#1D4ED8',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 'var(--space-8)'
-                        }}>
-                          <Icon name="info" />
-                          <span>{request.additionalInfo}</span>
-                        </div>
-                      )}
-                      
                       <div className="pending-actions" style={{ display: 'flex', gap: 'var(--space-12)', flexWrap: 'wrap' }}>
-                        <button 
-                          className="btn btn--success btn--sm" 
-                          onClick={() => handleAcceptPatient(request.id)}
+                        <button
+                          className="btn btn--success btn--sm"
+                          onClick={() => void handleAcceptPatient(String(request.id))}
                           style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', padding: 'var(--space-8) var(--space-16)' }}
                         >
                           <Icon name="user-check" /> Accept Patient
                         </button>
-                        <button 
-                          className="btn btn--outline btn--sm"
-                          onClick={() => handleRequestInfo(request)}
-                          style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', padding: 'var(--space-8) var(--space-16)' }}
-                        >
-                          <Icon name="message-circle" /> Request Info
-                        </button>
-                        <button 
+                        <button
                           className="btn btn--danger btn--sm"
-                          onClick={() => handleRejectPatient(request.id)}
+                          onClick={() => void handleRejectPatient(String(request.id))}
                           style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', padding: 'var(--space-8) var(--space-16)' }}
                         >
                           <Icon name="user-x" /> Decline
@@ -1983,15 +2149,13 @@ const DentistDashboard = () => {
             
             <div className="card">
               <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 className="card-title">Active Patients ({myPatients.length})</h3>
+                <h3 className="card-title">Active Patients ({activePatients.length})</h3>
                 <input type="text" className="form-input" placeholder="Search patients..." style={{ width: '250px', padding: 'var(--space-8) var(--space-12)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }} />
               </div>
-              
-              {myPatients.length > 0 ? (
+
+              {activePatients.length > 0 ? (
                 <div className="patients-list">
-                  {myPatients.map(patient => {
-                    const patientCases = dentistCases.filter(c => c.patientId === patient.id);
-                    return (
+                  {activePatients.map(patient => (
                       <div className="patient-card" key={patient.id} style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -2010,21 +2174,17 @@ const DentistDashboard = () => {
                           justifyContent: 'center',
                           fontWeight: 'var(--font-weight-bold)'
                         }}>
-                          {patient.name.split(' ').map(n => n[0]).join('')}
+                          {patient.patient_name.split(' ').map((n: string) => n[0]).join('')}
                         </div>
                         <div className="patient-info" style={{ flex: 1 }}>
-                          <div className="patient-name" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{patient.name}</div>
-                          <div className="patient-meta" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{patient.email}</div>
-                          <div className="patient-meta" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{patient.phone || 'No phone'}</div>
+                          <div className="patient-name" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{patient.patient_name}</div>
+                          <div className="patient-meta" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{patient.patient_email}</div>
+                          <div className="patient-meta" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{patient.patient_phone || 'No phone'}</div>
                         </div>
                         <div className="patient-stats" style={{ display: 'flex', gap: 'var(--space-24)' }}>
                           <div className="patient-stat" style={{ textAlign: 'center' }}>
-                            <span className="stat-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>Last Visit</span>
-                            <span className="stat-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{patient.lastVisit}</span>
-                          </div>
-                          <div className="patient-stat" style={{ textAlign: 'center' }}>
-                            <span className="stat-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>Cases</span>
-                            <span className="stat-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{patientCases.length}</span>
+                            <span className="stat-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>Connected</span>
+                            <span className="stat-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{formatDate(patient.connected_at)}</span>
                           </div>
                         </div>
                         <div className="patient-actions" style={{ display: 'flex', gap: 'var(--space-8)' }}>
@@ -2036,8 +2196,7 @@ const DentistDashboard = () => {
                           </button>
                         </div>
                       </div>
-                    );
-                  })}
+                  ))}
                 </div>
               ) : (
                 <div className="empty-state" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
@@ -2188,21 +2347,21 @@ const DentistDashboard = () => {
                       <div style={{ color: 'var(--color-primary)', marginTop: '2px' }}><Icon name="users" /></div>
                       <div>
                         <span className="profile-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Full Name</span>
-                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{dentistProfile.name}</span>
+                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{profileForm.name}</span>
                       </div>
                     </div>
                     <div className="profile-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-12)', padding: 'var(--space-12)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)' }}>
                       <div style={{ color: 'var(--color-primary)', marginTop: '2px' }}><Icon name="mail" /></div>
                       <div>
                         <span className="profile-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Email</span>
-                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{dentistProfile.email}</span>
+                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{profileForm.email}</span>
                       </div>
                     </div>
                     <div className="profile-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-12)', padding: 'var(--space-12)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)' }}>
                       <div style={{ color: 'var(--color-primary)', marginTop: '2px' }}><Icon name="hash" /></div>
                       <div>
                         <span className="profile-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Dentist Code</span>
-                        <span className="profile-value code" style={{ fontWeight: 'var(--font-weight-bold)', fontFamily: 'monospace', background: 'var(--color-primary)', color: 'white', padding: '4px 10px', borderRadius: 'var(--radius-sm)' }}>{dentistProfile.dentistCode}</span>
+                        <span className="profile-value code" style={{ fontWeight: 'var(--font-weight-bold)', fontFamily: 'monospace', background: 'var(--color-primary)', color: 'white', padding: '4px 10px', borderRadius: 'var(--radius-sm)' }}>{meData?.dentist_code ?? '—'}</span>
                       </div>
                     </div>
                     <div className="profile-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-12)', padding: 'var(--space-12)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)' }}>
@@ -2216,35 +2375,35 @@ const DentistDashboard = () => {
                       <div style={{ color: 'var(--color-primary)', marginTop: '2px' }}><Icon name="briefcase" /></div>
                       <div>
                         <span className="profile-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Clinic/Practice</span>
-                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{dentistProfile.clinic}</span>
+                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{profileForm.clinic}</span>
                       </div>
                     </div>
                     <div className="profile-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-12)', padding: 'var(--space-12)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)' }}>
                       <div style={{ color: 'var(--color-primary)', marginTop: '2px' }}><Icon name="award" /></div>
                       <div>
                         <span className="profile-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Specialization</span>
-                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{dentistProfile.specialization}</span>
+                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{profileForm.specialization}</span>
                       </div>
                     </div>
                     <div className="profile-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-12)', padding: 'var(--space-12)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)' }}>
                       <div style={{ color: 'var(--color-primary)', marginTop: '2px' }}><Icon name="phone" /></div>
                       <div>
                         <span className="profile-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Phone</span>
-                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{dentistProfile.phone}</span>
+                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{profileForm.phone}</span>
                       </div>
                     </div>
                     <div className="profile-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-12)', padding: 'var(--space-12)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)' }}>
                       <div style={{ color: 'var(--color-primary)', marginTop: '2px' }}><Icon name="map-pin" /></div>
                       <div>
                         <span className="profile-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Address</span>
-                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{dentistProfile.address}</span>
+                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{profileForm.address}</span>
                       </div>
                     </div>
                     <div className="profile-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-12)', padding: 'var(--space-12)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)' }}>
                       <div style={{ color: 'var(--color-primary)', marginTop: '2px' }}><Icon name="clock" /></div>
                       <div>
                         <span className="profile-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Availability</span>
-                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{dentistProfile.availability}</span>
+                        <span className="profile-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{profileForm.availability}</span>
                       </div>
                     </div>
                     <div className="profile-item" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-12)', padding: 'var(--space-12)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)' }}>
@@ -2343,7 +2502,7 @@ const DentistDashboard = () => {
                         <span style={{ fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)' }}>The following fields cannot be edited:</span>
                       </div>
                       <div style={{ display: 'flex', gap: 'var(--space-24)', flexWrap: 'wrap' }}>
-                        <div><strong>Dentist Code:</strong> {dentistProfile.dentistCode}</div>
+                        <div><strong>Dentist Code:</strong> {meData?.dentist_code ?? '—'}</div>
                         <div><strong>License Number:</strong> {dentistProfile.licenseNumber}</div>
                         <div><strong>Status:</strong> {dentistProfile.status}</div>
                       </div>
@@ -2363,7 +2522,7 @@ const DentistDashboard = () => {
                         <Icon name="users" />
                       </div>
                     </div>
-                    <span className="stat-number" style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--color-primary)', display: 'block' }}>{myPatients.length}</span>
+                    <span className="stat-number" style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--color-primary)', display: 'block' }}>{activePatients.length}</span>
                     <span className="stat-label" style={{ display: 'block', fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginTop: 'var(--space-4)' }}>Active Patients</span>
                   </div>
                   <div className="stat-item" style={{ textAlign: 'center', padding: 'var(--space-20)', background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(245, 158, 11, 0.15) 100%)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(245, 158, 11, 0.1)' }}>
@@ -2630,6 +2789,10 @@ const DentistDashboard = () => {
       userId={currentDentistId}
       activeView={activeView}
       onViewChange={setActiveView}
+      badges={{
+        'dentist-inbox': backendJobs.filter(j => j.status === 'draft_ready' || j.status === 'segmentation_pending').length,
+        'dentist-pending': pendingRequestsState.length,
+      }}
     >
       {renderContent()}
       
@@ -2660,79 +2823,6 @@ const DentistDashboard = () => {
         />
       )}
 
-      {/* Request Info Modal */}
-      {requestInfoModal.show && requestInfoModal.request && (
-        <div className="modal-container" style={{ display: 'flex' }}>
-          <div className="modal-backdrop" onClick={() => setRequestInfoModal({ show: false, request: null, message: '' })}></div>
-          <div className="modal" style={{ maxWidth: '500px' }}>
-            <div className="modal-header">
-              <h2 className="modal-title">Request More Information</h2>
-              <button className="close-modal" onClick={() => setRequestInfoModal({ show: false, request: null, message: '' })}>
-                <Icon name="x" />
-              </button>
-            </div>
-            <div className="modal-body">
-              <div style={{ marginBottom: 'var(--space-16)', padding: 'var(--space-12)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
-                  <div style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '50%',
-                    background: '#FEF3C7',
-                    color: '#B45309',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 'var(--font-weight-bold)'
-                  }}>
-                    {requestInfoModal.request.patientName.split(' ').map(n => n[0]).join('')}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>{requestInfoModal.request.patientName}</div>
-                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{requestInfoModal.request.patientEmail}</div>
-                  </div>
-                </div>
-              </div>
-              
-              <label style={{ display: 'block', fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)', marginBottom: 'var(--space-8)' }}>
-                What information do you need from this patient?
-              </label>
-              <textarea
-                value={requestInfoModal.message}
-                onChange={(e) => setRequestInfoModal(prev => ({ ...prev, message: e.target.value }))}
-                placeholder="e.g., Please provide your medical history, previous dental records, or insurance information..."
-                style={{
-                  width: '100%',
-                  minHeight: '120px',
-                  padding: 'var(--space-12)',
-                  borderRadius: 'var(--radius-md)',
-                  border: '2px solid var(--color-border)',
-                  fontSize: 'var(--font-size-base)',
-                  resize: 'vertical'
-                }}
-              />
-            </div>
-            <div className="modal-footer" style={{ 
-              borderTop: '1px solid var(--color-border)', 
-              padding: 'var(--space-16)', 
-              display: 'flex', 
-              justifyContent: 'flex-end',
-              gap: 'var(--space-12)'
-            }}>
-              <button className="btn btn--outline" onClick={() => setRequestInfoModal({ show: false, request: null, message: '' })}>
-                Cancel
-              </button>
-              <button 
-                className="btn btn--primary" 
-                onClick={sendInfoRequest}
-                disabled={!requestInfoModal.message.trim()}
-              >
-                <Icon name="send" /> Send Request
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </DashboardLayout>
   );
 };

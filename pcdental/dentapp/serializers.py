@@ -34,6 +34,27 @@ class DentistPatientLinkSerializer(serializers.ModelSerializer):
         read_only_fields = ["connection_code", "connected_at"]
 
 
+class PendingLinkSerializer(serializers.ModelSerializer):
+    patient_name = serializers.CharField(source='patient.patient.full_name', read_only=True)
+    patient_email = serializers.EmailField(source='patient.patient.email', read_only=True)
+
+    class Meta:
+        model = DentistPatientLink
+        fields = ["id", "patient_name", "patient_email", "connected_at"]
+        read_only_fields = fields
+
+
+class ActivePatientSerializer(serializers.ModelSerializer):
+    patient_name = serializers.CharField(source='patient.patient.full_name', read_only=True)
+    patient_email = serializers.EmailField(source='patient.patient.email', read_only=True)
+    patient_phone = serializers.CharField(source='patient.contact_number', read_only=True)
+
+    class Meta:
+        model = DentistPatientLink
+        fields = ["id", "patient_name", "patient_email", "patient_phone", "connected_at"]
+        read_only_fields = fields
+
+
 class AppointmentSerializer(serializers.ModelSerializer):
     patient = PatientSerializer(read_only=True)
     dentist = DentistSerializer(read_only=True)
@@ -61,12 +82,34 @@ class CTScanSerializer(serializers.ModelSerializer):
 
 class AIProcessingJobSerializer(serializers.ModelSerializer):
     ct_scan_id = serializers.IntegerField(source='ct_scan.id', read_only=True)
+    patient_name = serializers.SerializerMethodField()
+    scan_file_url = serializers.SerializerMethodField()
+
+    def get_patient_name(self, obj):
+        try:
+            return obj.ct_scan.dentist_patient_link.patient.patient.full_name
+        except Exception:
+            return ''
+
+    def get_scan_file_url(self, obj):
+        try:
+            file_field = obj.ct_scan.file
+            if not file_field:
+                return None
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(file_field.url)
+            return file_field.url
+        except Exception:
+            return None
 
     class Meta:
         model = AIProcessingJob
         fields = [
             "job_id",
             "ct_scan_id",
+            "patient_name",
+            "scan_file_url",
             "status",
             "is_fallback_mode",
             "annotated_image_url",
@@ -80,6 +123,8 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "job_id",
             "ct_scan_id",
+            "patient_name",
+            "scan_file_url",
             "status",
             "is_fallback_mode",
             "annotated_image_url",
