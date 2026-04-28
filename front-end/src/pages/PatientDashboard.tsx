@@ -783,6 +783,11 @@ const PatientDashboard = () => {
                           <div className="result-meta" style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)' }}>
                             Uploaded: {formatDate(job.created_at)} · {metaLabel}: {metaDate ? formatDate(metaDate) : 'N/A'}
                           </div>
+                          {job.dentist_name && (
+                            <div className="result-meta" style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)', marginTop: 'var(--space-4)' }}>
+                              <Icon name="user" /> Dr. {job.dentist_name}
+                            </div>
+                          )}
                         </div>
                         <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
                       </div>
@@ -1357,6 +1362,7 @@ const PatientDashboard = () => {
                 </h2>
                 <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
                   Uploaded {formatDate(job.created_at)}
+                  {job.dentist_name && <> · Dr. {job.dentist_name}</>}
                 </div>
               </div>
               <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-sm)', padding: '6px 14px' }}>

@@ -39,6 +39,7 @@ export interface AIJobDto {
   job_id: string;
   ct_scan_id: number;
   patient_name: string;
+  dentist_name: string;
   scan_file_url: string | null;
   status:
     | 'queued'

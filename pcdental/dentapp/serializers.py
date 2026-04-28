@@ -95,11 +95,18 @@ class CTScanSerializer(serializers.ModelSerializer):
 class AIProcessingJobSerializer(serializers.ModelSerializer):
     ct_scan_id = serializers.IntegerField(source='ct_scan.id', read_only=True)
     patient_name = serializers.SerializerMethodField()
+    dentist_name = serializers.SerializerMethodField()
     scan_file_url = serializers.SerializerMethodField()
 
     def get_patient_name(self, obj):
         try:
             return obj.ct_scan.dentist_patient_link.patient.patient.full_name
+        except Exception:
+            return ''
+
+    def get_dentist_name(self, obj):
+        try:
+            return obj.ct_scan.dentist_patient_link.dentist.dentist.full_name
         except Exception:
             return ''
 
@@ -124,6 +131,7 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
             "job_id",
             "ct_scan_id",
             "patient_name",
+            "dentist_name",
             "scan_file_url",
             "status",
             "is_fallback_mode",
@@ -139,6 +147,7 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
             "job_id",
             "ct_scan_id",
             "patient_name",
+            "dentist_name",
             "scan_file_url",
             "status",
             "is_fallback_mode",
