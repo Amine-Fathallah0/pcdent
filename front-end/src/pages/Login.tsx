@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from 'next-themes';
-import api from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 import { Button, Card, Input, Label, Spinner } from '@heroui/react';
+
 import { toast } from 'sonner';
 import ThemeToggle from '../components/auth/ThemeToggle';
 import FloatingImageBackground from '../components/auth/FloatingImageBackground';
@@ -15,6 +16,7 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { login } = useAuth();
   const { resolvedTheme } = useTheme();
   const backgroundAssets = getFloatingAssetsByTheme(resolvedTheme);
   const brandLogo = resolvedTheme === 'dark' ? '/dentalyze/light.png' : '/dentalyze/dark.png';
@@ -55,24 +57,19 @@ const Login: React.FC = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      const response = await api.post('login/', { username, password });
-      const { access, refresh, is_dentist, user_id, full_name } = response.data;
-      
-      localStorage.setItem('access_token', access);
-      localStorage.setItem('refresh_token', refresh);
-      localStorage.setItem('token', access);
-      localStorage.setItem('user_id', user_id);
-      localStorage.setItem('full_name', full_name);
-      localStorage.setItem('user_role', is_dentist ? 'dentist' : 'patient');
-
+      const success = await login(username, password);
+      if (!success) {
+        toast.error('Invalid credentials or server error');
+        return;
+      }
       toast.success('Login successful!');
-
-      if (is_dentist) {
+      const role = localStorage.getItem('user_role');
+      if (role === 'dentist') {
         navigate('/dentist', { replace: true });
       } else {
         navigate('/patient', { replace: true });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error);
       toast.error(getErrorMessage(error, 'Invalid credentials or server error'));
     } finally {

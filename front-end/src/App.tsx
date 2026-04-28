@@ -8,6 +8,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import RegisterDentist from './pages/RegisterDentist';
+import { useAuth } from './context/AuthContext';
 
 type AllowedRole = 'patient' | 'dentist' | 'admin';
 
@@ -18,14 +19,17 @@ const ProtectedRoute = ({
   allowedRole: AllowedRole;
   element: ReactElement;
 }) => {
-  const token = localStorage.getItem('token');
-  const role = localStorage.getItem('user_role');
+  const { user, isAuthenticated, isValidating } = useAuth();
 
-  if (!token) {
+  if (isValidating) {
+    return null; // brief blank while token is validated on mount
+  }
+
+  if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
-  if (role !== allowedRole) {
+  if (user?.role !== allowedRole) {
     return <Navigate to="/login" replace />;
   }
 

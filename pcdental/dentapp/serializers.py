@@ -34,6 +34,27 @@ class DentistPatientLinkSerializer(serializers.ModelSerializer):
         read_only_fields = ["connection_code", "connected_at"]
 
 
+class PendingLinkSerializer(serializers.ModelSerializer):
+    patient_name = serializers.CharField(source='patient.patient.full_name', read_only=True)
+    patient_email = serializers.EmailField(source='patient.patient.email', read_only=True)
+
+    class Meta:
+        model = DentistPatientLink
+        fields = ["id", "patient_name", "patient_email", "connected_at"]
+        read_only_fields = fields
+
+
+class ActivePatientSerializer(serializers.ModelSerializer):
+    patient_name = serializers.CharField(source='patient.patient.full_name', read_only=True)
+    patient_email = serializers.EmailField(source='patient.patient.email', read_only=True)
+    patient_phone = serializers.CharField(source='patient.contact_number', read_only=True)
+
+    class Meta:
+        model = DentistPatientLink
+        fields = ["id", "patient_name", "patient_email", "patient_phone", "connected_at"]
+        read_only_fields = fields
+
+
 class AppointmentSerializer(serializers.ModelSerializer):
     patient = PatientSerializer(read_only=True)
     dentist = DentistSerializer(read_only=True)
@@ -52,21 +73,66 @@ class AppointmentSerializer(serializers.ModelSerializer):
 class CTScanSerializer(serializers.ModelSerializer):
     patient = PatientSerializer(read_only=True)
     dentist = DentistSerializer(read_only=True)
+    # Accept the binary on upload but never echo back the raw /media/ URL.
+    file = serializers.FileField(write_only=True)
+    file_url = serializers.SerializerMethodField()
+
+    def get_file_url(self, obj):
+        if not obj.pk or not obj.file:
+            return None
+        path = f'/ct-scans/{obj.pk}/file/'
+        request = self.context.get('request')
+        if request is not None:
+            return request.build_absolute_uri(path)
+        return path
 
     class Meta:
         model = CTScan
-        fields = ["id", "dentist_patient_link", "patient", "dentist", "uploaded_by_user", "uploaded_at", "file", "description"]
-        read_only_fields = ["uploaded_at", "patient", "dentist", "uploaded_by_user"]
+        fields = ["id", "dentist_patient_link", "patient", "dentist", "uploaded_by_user", "uploaded_at", "file", "file_url", "description"]
+        read_only_fields = ["uploaded_at", "patient", "dentist", "uploaded_by_user", "file_url"]
 
 
 class AIProcessingJobSerializer(serializers.ModelSerializer):
     ct_scan_id = serializers.IntegerField(source='ct_scan.id', read_only=True)
+    patient_name = serializers.SerializerMethodField()
+    dentist_name = serializers.SerializerMethodField()
+    scan_file_url = serializers.SerializerMethodField()
+
+    def get_patient_name(self, obj):
+        try:
+            return obj.ct_scan.dentist_patient_link.patient.patient.full_name
+        except Exception:
+            return ''
+
+    def get_dentist_name(self, obj):
+        try:
+            return obj.ct_scan.dentist_patient_link.dentist.dentist.full_name
+        except Exception:
+            return ''
+
+    def get_scan_file_url(self, obj):
+        # Point at the authenticated streaming endpoint, never the raw
+        # /media/ URL — scans are private medical data.
+        try:
+            scan = obj.ct_scan
+            if not scan or not scan.pk or not scan.file:
+                return None
+            path = f'/ct-scans/{scan.pk}/file/'
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(path)
+            return path
+        except Exception:
+            return None
 
     class Meta:
         model = AIProcessingJob
         fields = [
             "job_id",
             "ct_scan_id",
+            "patient_name",
+            "dentist_name",
+            "scan_file_url",
             "status",
             "is_fallback_mode",
             "annotated_image_url",
@@ -80,6 +146,9 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "job_id",
             "ct_scan_id",
+            "patient_name",
+            "dentist_name",
+            "scan_file_url",
             "status",
             "is_fallback_mode",
             "annotated_image_url",

@@ -54,11 +54,26 @@ class Dentist(models.Model):
     dentist = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     location = models.CharField(max_length=100)
     contact_number = models.CharField(max_length=15)
+    dentist_code = models.CharField(max_length=7, unique=True, blank=True)
     patients = models.ManyToManyField(Patient, through='DentistPatientLink', related_name='dentists')
-    
+
     # Soft delete support
     deleted_at = models.DateTimeField(null=True, blank=True)
-    
+
+    _CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'  # no 0/O, 1/I/L
+
+    def save(self, *args, **kwargs):
+        if not self.dentist_code:
+            for _ in range(10):
+                suffix = ''.join(secrets.choice(self._CODE_ALPHABET) for _ in range(4))
+                code = f'DR-{suffix}'
+                if not Dentist.objects.filter(dentist_code=code).exists():
+                    self.dentist_code = code
+                    break
+            else:
+                raise RuntimeError('Failed to generate a unique dentist_code after 10 attempts.')
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Dr. {self.dentist.full_name} - {self.location}"
 
@@ -140,7 +155,7 @@ class CTScan(models.Model):
     uploaded_at = models.DateTimeField(auto_now_add=True)
     file = models.FileField(
         upload_to='ct_scans/%Y/%m/%d/',
-        validators=[FileExtensionValidator(allowed_extensions=['dcm', 'nii', 'nrrd'])]
+        validators=[FileExtensionValidator(allowed_extensions=['dcm', 'nii', 'nrrd', 'jpg', 'jpeg', 'png'])]
     )
     description = models.TextField(blank=True)
     deleted_at = models.DateTimeField(null=True, blank=True)

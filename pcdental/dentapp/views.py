@@ -1,7 +1,11 @@
 import logging
+import mimetypes
+import os
 
 from django.contrib.auth import get_user_model
+from django.http import FileResponse, Http404
 from django.utils import timezone
+from django.utils.encoding import smart_str
 from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
@@ -16,6 +20,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import AIProcessingJob, Appointment, CTScan, Dentist, DentistPatientLink, Patient
 from .serializers import (
+    ActivePatientSerializer,
     AIProcessingJobSerializer,
     AppointmentSerializer,
     CTScanSerializer,
@@ -23,6 +28,7 @@ from .serializers import (
     DentistRegistrationSerializer,
     JobReviewDecisionSerializer,
     PatientRegistrationSerializer,
+    PendingLinkSerializer,
     UserSerializer,
 )
 
@@ -174,8 +180,19 @@ class UserDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        serializer = UserSerializer(request.user)
-        return Response(serializer.data)
+        data = UserSerializer(request.user).data
+        dentist = Dentist.objects.filter(dentist=request.user, deleted_at__isnull=True).first()
+        if dentist:
+            data['is_dentist'] = True
+            data['location'] = dentist.location
+            data['contact_number'] = dentist.contact_number
+            data['dentist_code'] = dentist.dentist_code
+        else:
+            data['is_dentist'] = False
+            data['location'] = None
+            data['contact_number'] = None
+            data['dentist_code'] = None
+        return Response(data)
 
 class LogoutView(APIView):
     """
@@ -317,9 +334,58 @@ class CTScanListCreateView(generics.ListCreateAPIView):
 
         payload = {
             'scan': CTScanSerializer(scan, context={'request': request}).data,
-            'job': AIProcessingJobSerializer(job).data,
+            'job': AIProcessingJobSerializer(job, context={'request': request}).data,
         }
         return Response(payload, status=status.HTTP_201_CREATED)
+
+
+class CTScanFileView(APIView):
+    """
+    Stream the raw CT scan file to authorized users only.
+
+    Replaces relying on Django's public ``/media/`` URL, which had no
+    authentication and would only work with ``DEBUG=True``. Only the dentist
+    or the patient on the scan's link may download it.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        scan = generics.get_object_or_404(
+            CTScan.objects.select_related('dentist_patient_link'),
+            pk=pk,
+            deleted_at__isnull=True,
+        )
+
+        link = scan.dentist_patient_link
+        dentist_profile, patient_profile = _get_role_profiles(request)
+        is_authorized = (
+            (dentist_profile and link.dentist_id == dentist_profile.pk)
+            or (patient_profile and link.patient_id == patient_profile.pk)
+        )
+        if not is_authorized:
+            raise PermissionDenied('You do not have access to this scan.')
+
+        if not scan.file:
+            raise Http404('Scan file is missing.')
+
+        try:
+            file_handle = scan.file.open('rb')
+        except FileNotFoundError as exc:
+            raise Http404('Scan file is missing on disk.') from exc
+
+        filename = os.path.basename(scan.file.name)
+        content_type, _ = mimetypes.guess_type(filename)
+        response = FileResponse(
+            file_handle,
+            as_attachment=False,
+            content_type=content_type or 'application/octet-stream',
+        )
+        response['Content-Disposition'] = (
+            f'inline; filename="{smart_str(filename)}"'
+        )
+        # Private medical data — do not let proxies/CDNs cache it.
+        response['Cache-Control'] = 'private, no-store'
+        return response
 
 
 class AIProcessingJobListView(generics.ListAPIView):
@@ -328,7 +394,7 @@ class AIProcessingJobListView(generics.ListAPIView):
 
     def get_queryset(self):
         dentist_profile, patient_profile = _get_role_profiles(self.request)
-        queryset = AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link')
+        queryset = AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link', 'ct_scan__dentist_patient_link__patient', 'ct_scan__dentist_patient_link__patient__patient')
 
         if dentist_profile:
             return queryset.filter(ct_scan__dentist_patient_link__dentist=dentist_profile)
@@ -344,7 +410,7 @@ class AIProcessingJobDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         dentist_profile, patient_profile = _get_role_profiles(self.request)
-        queryset = AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link')
+        queryset = AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link', 'ct_scan__dentist_patient_link__patient', 'ct_scan__dentist_patient_link__patient__patient')
         if dentist_profile:
             return queryset.filter(ct_scan__dentist_patient_link__dentist=dentist_profile)
         if patient_profile:
@@ -357,7 +423,7 @@ class AIProcessingJobGenerateDraftView(APIView):
 
     def post(self, request, job_id):
         job = generics.get_object_or_404(
-            AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link'),
+            AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link', 'ct_scan__dentist_patient_link__patient', 'ct_scan__dentist_patient_link__patient__patient'),
             job_id=job_id,
         )
         dentist_profile, patient_profile = _get_role_profiles(request)
@@ -376,7 +442,7 @@ class AIProcessingJobGenerateDraftView(APIView):
         )
         job.save(update_fields=['draft_report', 'status', 'updated_at'])
 
-        return Response(AIProcessingJobSerializer(job).data, status=status.HTTP_200_OK)
+        return Response(AIProcessingJobSerializer(job, context={'request': request}).data, status=status.HTTP_200_OK)
 
 
 class AIProcessingJobReviewView(APIView):
@@ -391,7 +457,7 @@ class AIProcessingJobReviewView(APIView):
             raise PermissionDenied('Only dentists can review or finalize reports.')
 
         job = generics.get_object_or_404(
-            AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link'),
+            AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link', 'ct_scan__dentist_patient_link__patient', 'ct_scan__dentist_patient_link__patient__patient'),
             job_id=job_id,
             ct_scan__dentist_patient_link__dentist=dentist_profile,
         )
@@ -405,7 +471,97 @@ class AIProcessingJobReviewView(APIView):
             job.status = 'dentist_reviewed'
         job.save(update_fields=['dentist_notes', 'status', 'completed_at', 'updated_at'])
 
-        return Response(AIProcessingJobSerializer(job).data, status=status.HTTP_200_OK)
+        return Response(AIProcessingJobSerializer(job, context={'request': request}).data, status=status.HTTP_200_OK)
+
+class ActivePatientListView(generics.ListAPIView):
+    serializer_class = ActivePatientSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        dentist_profile, _ = _get_role_profiles(self.request)
+        if not dentist_profile:
+            raise PermissionDenied('Only dentists can view their patients.')
+        return (
+            DentistPatientLink.objects
+            .filter(dentist=dentist_profile, is_active=True)
+            .select_related('patient__patient')
+        )
+
+
+class PendingLinkListView(generics.ListAPIView):
+    serializer_class = PendingLinkSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        dentist_profile, _ = _get_role_profiles(self.request)
+        if not dentist_profile:
+            raise PermissionDenied('Only dentists can view pending requests.')
+        return (
+            DentistPatientLink.objects
+            .filter(dentist=dentist_profile, is_active=False)
+            .select_related('patient__patient')
+        )
+
+
+class LinkApproveView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        dentist_profile, _ = _get_role_profiles(request)
+        if not dentist_profile:
+            raise PermissionDenied('Only dentists can approve requests.')
+        link = generics.get_object_or_404(
+            DentistPatientLink, pk=pk, dentist=dentist_profile, is_active=False
+        )
+        link.is_active = True
+        link.save(update_fields=['is_active'])
+        return Response({'detail': 'Patient accepted.'}, status=status.HTTP_200_OK)
+
+
+class LinkRejectView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        dentist_profile, _ = _get_role_profiles(request)
+        if not dentist_profile:
+            raise PermissionDenied('Only dentists can reject requests.')
+        link = generics.get_object_or_404(
+            DentistPatientLink, pk=pk, dentist=dentist_profile, is_active=False
+        )
+        link.delete()
+        return Response({'detail': 'Patient request rejected.'}, status=status.HTTP_200_OK)
+
+
+class DentistPatientLinkRequestView(APIView):
+    """Patient enters a dentist's DR-XXXX code to send a connection request."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        dentist_code = request.data.get('dentist_code', '').strip().upper()
+        if not dentist_code:
+            return Response({'detail': 'dentist_code is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        _, patient_profile = _get_role_profiles(request)
+        if not patient_profile:
+            raise PermissionDenied('Only patients can send connection requests.')
+
+        try:
+            dentist = Dentist.objects.get(dentist_code=dentist_code, deleted_at__isnull=True)
+        except Dentist.DoesNotExist:
+            return Response({'detail': 'No dentist found with that code.'}, status=status.HTTP_404_NOT_FOUND)
+
+        existing = DentistPatientLink.objects.filter(dentist=dentist, patient=patient_profile).first()
+        if existing:
+            msg = 'You are already connected to this dentist.' if existing.is_active else 'A pending request already exists for this dentist.'
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        link = DentistPatientLink.objects.create(
+            dentist=dentist,
+            patient=patient_profile,
+            is_active=False,
+        )
+        return Response(DentistPatientLinkSerializer(link).data, status=status.HTTP_201_CREATED)
+
 
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
