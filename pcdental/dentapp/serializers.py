@@ -48,10 +48,11 @@ class ActivePatientSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source='patient.patient.full_name', read_only=True)
     patient_email = serializers.EmailField(source='patient.patient.email', read_only=True)
     patient_phone = serializers.CharField(source='patient.contact_number', read_only=True)
+    patient_user_id = serializers.UUIDField(source='patient.patient.user_id', read_only=True)
 
     class Meta:
         model = DentistPatientLink
-        fields = ["id", "patient_name", "patient_email", "patient_phone", "connected_at"]
+        fields = ["id", "patient_name", "patient_email", "patient_phone", "patient_user_id", "connected_at"]
         read_only_fields = fields
 
 
@@ -61,7 +62,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Appointment
-        fields = ["id", "dentist_patient_link", "patient", "dentist", "appointment_date", "status", "notes", "created_at", "updated_at"]
+        fields = ["id", "dentist_patient_link", "patient", "dentist", "appointment_date", "status", "appointment_type", "duration", "notes", "created_at", "updated_at"]
         read_only_fields = ["created_at", "updated_at", "patient", "dentist"]
 
     def validate_appointment_date(self, value):

@@ -1,9 +1,11 @@
-import { useEffect, type ReactNode } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
+import { useTheme } from 'next-themes';
 import { useNavigate } from 'react-router-dom';
 import NotificationCenter from '../notifications/NotificationCenter';
 import ReminderCenter, { type ReminderEntry } from '../notifications/ReminderCenter';
 import api from '../../lib/api';
 import ThemeToggle from '../auth/ThemeToggle';
+import { useAuth } from '../../context/AuthContext';
 
 interface DashboardLayoutProps {
   role: 'patient' | 'dentist' | 'admin';
@@ -14,6 +16,7 @@ interface DashboardLayoutProps {
   onViewChange: (view: string) => void;
   reminderItems?: ReminderEntry[];
   badges?: Record<string, number>;
+  onProfileClick?: () => void;
 }
 
 const DashboardLayout = ({
@@ -25,8 +28,13 @@ const DashboardLayout = ({
   onViewChange,
   reminderItems = [],
   badges = {},
+  onProfileClick,
 }: DashboardLayoutProps) => {
   const navigate = useNavigate();
+  const { logout } = useAuth();
+  const { resolvedTheme } = useTheme();
+  const brandLogo = resolvedTheme === 'dark' ? '/dentalyze/light.png' : '/dentalyze/dark.png';
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const lockState = { dashboardLock: true };
@@ -44,24 +52,19 @@ const DashboardLayout = ({
     };
   }, []);
 
-  const clearLocalAuth = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    localStorage.removeItem('token');
-    localStorage.removeItem('user_id');
-    localStorage.removeItem('full_name');
-    localStorage.removeItem('user_role');
-  };
-
   const handleLogout = async () => {
+    const refresh = localStorage.getItem('refresh_token');
+    logout();
+    navigate('/login', { replace: true });
+
+    if (!refresh) {
+      return;
+    }
+
     try {
-      const refresh = localStorage.getItem('refresh_token');
       await api.post('logout/', { refresh });
     } catch (error) {
-      console.error('Logout API failed, clearing local session anyway:', error);
-    } finally {
-      clearLocalAuth();
-      navigate('/login', { replace: true });
+      console.error('Logout API failed after local logout:', error);
     }
   };
 
@@ -91,15 +94,12 @@ const DashboardLayout = ({
       case 'dentist':
         return [
           { id: 'dentist-dashboard', label: 'Dashboard', icon: 'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z', badge: undefined },
-          { id: 'dentist-inbox', label: 'Case Inbox', icon: 'M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4', badge: undefined },
+          { id: 'dentist-patients', label: 'Patients', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z', badge: undefined },
           { id: 'dentist-appointments', label: 'Appointments', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', badge: undefined },
           { id: 'dentist-messages', label: 'Messages', icon: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z', badge: undefined },
           { id: 'dentist-charting', label: 'Clinical Chart', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', badge: undefined },
           { id: 'dentist-treatment', label: 'Treatment Plans', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01', badge: undefined },
-          { id: 'dentist-pending', label: 'Pending Patients', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', badge: undefined },
           { id: 'dentist-upload', label: 'New Analysis', icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12', badge: undefined },
-          { id: 'dentist-patients', label: 'My Patients', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z', badge: undefined },
-          { id: 'dentist-profile', label: 'My Profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z', badge: undefined }
         ];
       case 'admin':
         return [
@@ -117,42 +117,13 @@ const DashboardLayout = ({
   return (
     <div className="main-app">
       {/* Sidebar */}
-      <aside className="sidebar" id="sidebar">
+      <aside className={`sidebar${sidebarOpen ? ' sidebar--open' : ''}`} id="sidebar">
         <div className="sidebar-header">
-          <div className="sidebar-header-top">
-            <div className="sidebar-brand">
-              <div className="logo-small">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 2C8 2 5 5 5 9c0 2 1 4 2 5v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-6c1-1 2-3 2-5 0-4-3-7-7-7z" />
-                </svg>
-              </div>
-              <div className="sidebar-brand__text">
-                <p className="sidebar-brand__kicker">Dentalyze</p>
-                <p className="sidebar-brand__title">Patient Portal</p>
-              </div>
+          <div className="sidebar-brand">
+            <div className="sidebar-brand__text">
+              <img className="sidebar-brand__logo" src={brandLogo} alt="Dentalyze" />
             </div>
-
-            {userId && (
-              <div className="sidebar-alerts">
-                <div className="sidebar-bell-wrap">
-                  <NotificationCenter
-                    userId={userId}
-                    onNavigate={onViewChange}
-                  />
-                </div>
-                {role === 'patient' && (
-                  <div className="sidebar-bell-wrap">
-                    <ReminderCenter
-                      reminders={reminderItems}
-                      onNavigate={onViewChange}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
           </div>
-
-
         </div>
 
         <nav className="sidebar-nav">
@@ -178,10 +149,24 @@ const DashboardLayout = ({
         </nav>
 
         <div className="sidebar-footer">
+          <button
+            className="sidebar-toggle-btn"
+            onClick={() => setSidebarOpen(o => !o)}
+            aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            aria-expanded={sidebarOpen}
+          >
+            {sidebarOpen ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            )}
+            <span className="sidebar-link__label">{sidebarOpen ? 'Collapse' : 'Expand'}</span>
+          </button>
           <button className="btn btn--secondary btn--sm btn--full" onClick={handleLogout}>Logout</button>
-          <div className="sidebar-footer-controls">
-            <ThemeToggle />
-          </div>
         </div>
       </aside>
 
@@ -201,8 +186,25 @@ const DashboardLayout = ({
               aria-label="Search"
             />
           </div>
+
           <div className="dashboard-topbar__right">
-            <div className="dashboard-topbar__profile">
+            {userId && (
+              <div className="topbar-alerts">
+                <NotificationCenter userId={userId} onNavigate={onViewChange} />
+                {role === 'patient' && (
+                  <ReminderCenter reminders={reminderItems} onNavigate={onViewChange} />
+                )}
+              </div>
+            )}
+            <ThemeToggle />
+            <div
+              className={`dashboard-topbar__profile${onProfileClick ? ' dashboard-topbar__profile--clickable' : ''}`}
+              onClick={onProfileClick}
+              role={onProfileClick ? 'button' : undefined}
+              tabIndex={onProfileClick ? 0 : undefined}
+              onKeyDown={onProfileClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onProfileClick(); } : undefined}
+              aria-label={onProfileClick ? 'Open profile' : undefined}
+            >
               <div className="dashboard-topbar__avatar" aria-hidden="true">
                 {userName.charAt(0).toUpperCase()}
               </div>

@@ -127,6 +127,8 @@ class Appointment(models.Model):
     dentist_patient_link = models.ForeignKey(DentistPatientLink, on_delete=models.PROTECT)
     appointment_date = models.DateTimeField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+    appointment_type = models.TextField(blank=True)
+    duration = models.IntegerField(default=30)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

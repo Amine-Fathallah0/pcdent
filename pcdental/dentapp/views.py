@@ -3,6 +3,7 @@ import mimetypes
 import os
 
 from django.contrib.auth import get_user_model
+from django.db.models import Count
 from django.http import FileResponse, Http404
 from django.utils import timezone
 from django.utils.encoding import smart_str
@@ -288,6 +289,29 @@ class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
     def perform_destroy(self, instance):
         instance.deleted_at = timezone.now()
         instance.save(update_fields=['deleted_at'])
+
+
+class AppointmentTypeSuggestionsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        dentist_profile, _ = _get_role_profiles(request)
+        if not dentist_profile:
+            return Response([])
+        suggestions = (
+            Appointment.objects
+            .filter(
+                dentist_patient_link__dentist=dentist_profile,
+                deleted_at__isnull=True,
+                appointment_type__gt='',
+            )
+            .values('appointment_type')
+            .annotate(count=Count('appointment_type'))
+            .filter(count__gte=3)
+            .order_by('-count')
+            .values_list('appointment_type', flat=True)
+        )
+        return Response(list(suggestions))
 
 
 class CTScanListCreateView(generics.ListCreateAPIView):

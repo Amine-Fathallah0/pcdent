@@ -97,6 +97,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUser({ id: user_id, name: full_name, email: usernameOrEmail, role });
       return true;
     } catch {
+      clearStorage();
       return false;
     }
   }, []);
