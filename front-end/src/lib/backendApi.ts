@@ -59,6 +59,57 @@ export interface AIJobDto {
   completed_at: string | null;
 }
 
+export interface AppointmentUserDto {
+  user_id: string;
+  username: string;
+  email: string;
+  full_name: string;
+}
+
+export interface AppointmentPatientDto {
+  user: AppointmentUserDto;
+  date_of_birth?: string;
+  contact_number?: string;
+  address?: string;
+}
+
+export interface AppointmentDentistDto {
+  user: AppointmentUserDto;
+  location?: string;
+  contact_number?: string;
+}
+
+export interface AppointmentDto {
+  id: number;
+  dentist_patient_link: number;
+  patient: AppointmentPatientDto;
+  dentist: AppointmentDentistDto;
+  appointment_date: string;
+  status: 'scheduled' | 'completed' | 'cancelled' | 'no_show';
+  appointment_type: string;
+  duration: number;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAppointmentPayload {
+  dentist_patient_link: number;
+  appointment_date: string;
+  status?: 'scheduled' | 'completed' | 'cancelled' | 'no_show';
+  appointment_type?: string;
+  duration?: number;
+  notes?: string | null;
+}
+
+export interface UpdateAppointmentPayload {
+  appointment_date?: string;
+  status?: 'scheduled' | 'completed' | 'cancelled' | 'no_show';
+  appointment_type?: string;
+  duration?: number;
+  notes?: string | null;
+}
+
 export interface UploadScanResponse {
   scan: CTScanDto;
   job: AIJobDto;
@@ -102,11 +153,32 @@ export const generateDraft = async (jobId: string): Promise<AIJobDto> => {
   return response.data;
 };
 
+export const fetchAppointments = async (): Promise<AppointmentDto[]> => {
+  const response = await api.get<AppointmentDto[]>('appointments/');
+  return response.data;
+};
+
+export const createAppointment = async (payload: CreateAppointmentPayload): Promise<AppointmentDto> => {
+  const response = await api.post<AppointmentDto>('appointments/', payload);
+  return response.data;
+};
+
+export const updateAppointment = async (id: number, payload: UpdateAppointmentPayload): Promise<AppointmentDto> => {
+  const response = await api.patch<AppointmentDto>(`appointments/${id}/`, payload);
+  return response.data;
+};
+
+export const fetchAppointmentTypeSuggestions = async (): Promise<string[]> => {
+  const response = await api.get<string[]>('appointments/type-suggestions/');
+  return response.data;
+};
+
 export interface ActivePatientDto {
   id: number;
   patient_name: string;
   patient_email: string;
   patient_phone: string;
+  patient_user_id: string;
   connected_at: string;
 }
 

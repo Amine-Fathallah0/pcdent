@@ -16,33 +16,30 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, user, isAuthenticated, isValidating } = useAuth();
   const { resolvedTheme } = useTheme();
   const backgroundAssets = getFloatingAssetsByTheme(resolvedTheme);
   const brandLogo = resolvedTheme === 'dark' ? '/dentalyze/light.png' : '/dentalyze/dark.png';
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const role = localStorage.getItem('user_role');
-
-    if (!token) {
+    if (isValidating || !isAuthenticated) {
       return;
     }
 
-    if (role === 'dentist') {
+    if (user?.role === 'dentist') {
       navigate('/dentist', { replace: true });
       return;
     }
 
-    if (role === 'patient') {
+    if (user?.role === 'patient') {
       navigate('/patient', { replace: true });
       return;
     }
 
-    if (role === 'admin') {
+    if (user?.role === 'admin') {
       navigate('/admin', { replace: true });
     }
-  }, [navigate]);
+  }, [isAuthenticated, isValidating, navigate, user?.role]);
 
   const getErrorMessage = (error: any, fallback: string) => {
     const data = error?.response?.data;

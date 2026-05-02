@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo, type JSX } from 'react';
+﻿import { useState, useRef, useCallback, useEffect, useMemo, type JSX } from 'react';
 import { useAuth } from '../context/AuthContext';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import AppointmentList from '../components/appointments/AppointmentList';
@@ -6,15 +6,12 @@ import AppointmentScheduler from '../components/appointments/AppointmentSchedule
 import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
 import AuthenticatedScanImage from '../components/AuthenticatedScanImage';
-import { approveLink, fetchActivePatients, fetchJobs, fetchMe, fetchMyLinks, fetchPendingLinks, generateDraft, rejectLink, reviewJob, uploadCTScan, type ActivePatientDto, type AIJobDto, type MeDto, type PendingLinkDto } from '../lib/backendApi';
+import { approveLink, createAppointment, fetchActivePatients, fetchAppointments, fetchJobs, fetchMe, fetchMyLinks, fetchPendingLinks, generateDraft, rejectLink, reviewJob, updateAppointment, uploadCTScan, type ActivePatientDto, type AIJobDto, type AppointmentDto, type MeDto, type PendingLinkDto } from '../lib/backendApi';
+import PatientsHub from './PatientsHub';
 import {
   createCase,
   database,
   getCasesByDentist,
-  getPatientsByDentist,
-  getAppointmentsByDentist,
-  getUpcomingAppointments,
-  getTodaysAppointments,
   addNotification,
   formatDate,
   formatDateTime,
@@ -56,6 +53,7 @@ const icons: Record<string, JSX.Element> = {
   calendar: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
   phone: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg>,
   mail: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+  'chevron-left': <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>,
   'map-pin': <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>,
   award: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>,
   briefcase: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>,
@@ -66,6 +64,12 @@ const icons: Record<string, JSX.Element> = {
 const Icon = ({ name }: { name: string }) => icons[name] || <span>{name}</span>;
 
 type InboxTab = 'new-uploads' | 'needs-review' | 'finalized';
+
+const inboxTabLabels: Record<InboxTab, string> = {
+  'new-uploads': 'New Uploads',
+  'needs-review': 'Needs Review',
+  finalized: 'Finalized / Sent',
+};
 
 const mapBackendStatusToInboxTab = (status: AIJobDto['status']): InboxTab => {
   switch (status) {
@@ -139,6 +143,43 @@ const mapBackendJobToCaseStatus = (status: AIJobDto['status']): Case['status'] =
     default:
       return 'UPLOADED';
   }
+};
+
+const formatLocalDate = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const formatLocalTime = (value: Date): string => {
+  const hours = String(value.getHours()).padStart(2, '0');
+  const minutes = String(value.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
+const mapAppointmentStatus = (status: AppointmentDto['status']): Appointment['status'] => {
+  if (status === 'no_show') return 'no-show';
+  return status;
+};
+
+const mapAppointmentDtoToUi = (appointment: AppointmentDto): Appointment => {
+  const dateValue = new Date(appointment.appointment_date);
+  return {
+    id: String(appointment.id),
+    patientId: appointment.patient.user.user_id,
+    patientName: appointment.patient.user.full_name,
+    patientEmail: appointment.patient.user.email,
+    dentistId: appointment.dentist.user.user_id,
+    dentistName: appointment.dentist.user.full_name,
+    date: formatLocalDate(dateValue),
+    time: formatLocalTime(dateValue),
+    duration: appointment.duration ?? 30,
+    type: appointment.appointment_type || 'consultation',
+    status: mapAppointmentStatus(appointment.status),
+    notes: appointment.notes || null,
+    createdAt: appointment.created_at,
+  };
 };
 
 // Case Review Modal Component
@@ -325,13 +366,16 @@ const DentistDashboard = () => {
   const currentDentistName = user?.name ?? '';
   const [activeView, setActiveView] = useState('dentist-dashboard');
   const [activeInboxTab, setActiveInboxTab] = useState<InboxTab>('new-uploads');
+  const [dashboardInboxExpanded, setDashboardInboxExpanded] = useState(false);
   const [reviewingJob, setReviewingJob] = useState<AIJobDto | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [jobActionLoading, setJobActionLoading] = useState(false);
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
-  const [appointments, setAppointments] = useState<Appointment[]>(getAppointmentsByDentist(currentDentistId));
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [appointmentsLoading, setAppointmentsLoading] = useState(false);
+  const [appointmentsError, setAppointmentsError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0); // Force re-render for dynamic data
   const [backendJobs, setBackendJobs] = useState<AIJobDto[]>([]);
   const [backendJobsLoading, setBackendJobsLoading] = useState(false);
@@ -398,7 +442,8 @@ const DentistDashboard = () => {
   const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   const loadJobs = useCallback(async () => {
-    if (activeView !== 'dentist-inbox') {
+    const shouldLoadJobs = activeView === 'dentist-dashboard' || activeView === 'dentist-patients';
+    if (!shouldLoadJobs) {
       return;
     }
 
@@ -415,9 +460,63 @@ const DentistDashboard = () => {
     }
   }, [activeView]);
 
+  const loadAppointments = useCallback(async () => {
+    setAppointmentsLoading(true);
+    setAppointmentsError(null);
+    try {
+      const items = await fetchAppointments();
+      setAppointments(items.map(mapAppointmentDtoToUi));
+    } catch {
+      setAppointmentsError('Unable to load appointments.');
+    } finally {
+      setAppointmentsLoading(false);
+    }
+  }, []);
+
+  const handleCreateAppointment = useCallback(async ({
+    dentistPatientLinkId,
+    appointmentDate,
+    appointmentType,
+    duration,
+    notes,
+  }: {
+    dentistPatientLinkId: number;
+    appointmentDate: string;
+    appointmentType?: string;
+    duration?: number;
+    notes: string | null;
+  }) => {
+    const created = await createAppointment({
+      dentist_patient_link: dentistPatientLinkId,
+      appointment_date: appointmentDate,
+      status: 'scheduled',
+      appointment_type: appointmentType ?? '',
+      duration: duration ?? 30,
+      notes: notes ?? '',
+    });
+    return mapAppointmentDtoToUi(created);
+  }, []);
+
+  const handleUpdateAppointmentStatus = useCallback(async (appointmentId: string, status: Appointment['status']) => {
+    const backendStatus = status === 'no-show'
+      ? 'no_show'
+      : status === 'confirmed'
+        ? 'scheduled'
+        : status;
+    const updated = await updateAppointment(Number(appointmentId), { status: backendStatus });
+    const mapped = mapAppointmentDtoToUi(updated);
+    setAppointments((prev) => prev.map((item) => (item.id === String(updated.id) ? mapped : item)));
+  }, []);
+
   useEffect(() => {
     void loadJobs();
   }, [loadJobs, refreshKey]);
+
+  useEffect(() => {
+    if (activeView === 'dentist-dashboard' || activeView === 'dentist-appointments') {
+      void loadAppointments();
+    }
+  }, [activeView, loadAppointments]);
 
   useEffect(() => {
     fetchMe().then(data => {
@@ -433,7 +532,8 @@ const DentistDashboard = () => {
   }, []);
 
   useEffect(() => {
-    if (activeView !== 'dentist-inbox') {
+    const shouldAutoRefresh = activeView === 'dentist-patients';
+    if (!shouldAutoRefresh) {
       return;
     }
 
@@ -445,10 +545,10 @@ const DentistDashboard = () => {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeView, loadJobs]);
+  }, [activeView, dashboardInboxExpanded, loadJobs]);
 
   useEffect(() => {
-    if (activeView === 'dentist-patients' || activeView === 'dentist-pending') {
+    if (activeView === 'dentist-patients' || activeView === 'dentist-dashboard') {
       void loadActivePatients();
       void loadPendingLinks();
     }
@@ -456,10 +556,23 @@ const DentistDashboard = () => {
 
   // Get dynamic data from database
   const dentistCases = getCasesByDentist(currentDentistId);
-  const myPatients = getPatientsByDentist(currentDentistId);
+  const chartingPatients = activePatients;
+  const dentistPatientsForScheduler = useMemo(
+    () => activePatients.map((patient) => ({
+      id: String(patient.id),
+      name: patient.patient_name,
+      email: patient.patient_email,
+    })),
+    [activePatients]
+  );
   const { dentistProfile } = database;
-  const upcomingAppointments = getUpcomingAppointments(currentDentistId, 'dentist');
-  const todaysAppointments = getTodaysAppointments(currentDentistId);
+  const todaysAppointments = useMemo(() => {
+    const today = formatLocalDate(new Date());
+    return appointments.filter((appointment) =>
+      appointment.date === today
+      && (appointment.status === 'scheduled' || appointment.status === 'confirmed')
+    );
+  }, [appointments]);
 
   const backendJobsById = useMemo(() => {
     const map = new Map<string, AIJobDto>();
@@ -601,7 +714,7 @@ const DentistDashboard = () => {
         type: 'case',
         title: 'Scan Uploaded',
         message: 'Scan uploaded successfully. Draft report is ready for review.',
-        actionUrl: 'dentist-inbox'
+        actionUrl: 'dentist-patients'
       });
 
       setTimeout(() => {
@@ -610,7 +723,7 @@ const DentistDashboard = () => {
         setUploadProgress(0);
         setUploadStatus('idle');
         setSelectedPatientForUpload('');
-        setActiveView('dentist-inbox');
+        setActiveView('dentist-patients');
       }, 2000);
     } catch (error: unknown) {
       console.error(error);
@@ -640,8 +753,6 @@ const DentistDashboard = () => {
   }, []);
 
   // Calculate stats
-  const totalPatients = activePatients.length;
-  const highRiskAlerts = resolvedDentistCases.filter(c => c.aiFindings.some(f => f.urgency === 'high') && c.status !== 'SENT_TO_PATIENT').length;
   const casesThisMonth = resolvedDentistCases.filter(c => {
     const caseDate = new Date(c.uploadedAt);
     const now = new Date();
@@ -684,6 +795,244 @@ const DentistDashboard = () => {
       default: return backendNewUploads;
     }
   };
+
+  const handleInboxIndicatorClick = (tab: InboxTab) => {
+    setActiveInboxTab(tab);
+    setDashboardInboxExpanded(prev => (prev && activeInboxTab === tab ? false : true));
+  };
+
+  const renderInboxJobs = ({ showRefresh = false, compact = false }: { showRefresh?: boolean; compact?: boolean } = {}) => {
+    const jobs = getCurrentTabJobs();
+    const minCardWidth = compact ? 300 : 360;
+    const gridGap = compact ? 'var(--space-12)' : 'var(--space-16)';
+
+    return (
+      <>
+        {showRefresh && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-16)' }}>
+            <button className="btn btn--outline btn--sm" onClick={() => setRefreshKey(prev => prev + 1)}>
+              <Icon name="activity" /> Refresh
+            </button>
+          </div>
+        )}
+
+        {backendJobsLoading ? (
+          <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+            <h3>Loading cases...</h3>
+          </div>
+        ) : backendJobsError ? (
+          <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+            <h3 style={{ color: '#B91C1C' }}>Unable to load cases</h3>
+            <p>{backendJobsError}</p>
+          </div>
+        ) : jobs.length > 0 ? (
+          <div className="case-cards-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))`, gap: gridGap }}>
+            {jobs.map(job => (
+              <div className="case-card card" key={job.job_id} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-12)' }}>
+                {/* Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
+                    <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--color-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'var(--font-weight-bold)', fontSize: 'var(--font-size-lg)' }}>
+                      {job.patient_name ? job.patient_name.split(' ').map((n: string) => n[0]).join('') : '?'}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>{job.patient_name || 'Unknown Patient'}</div>
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>Scan #{job.ct_scan_id} · {formatDate(job.created_at)}</div>
+                    </div>
+                  </div>
+                  <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-xs)', padding: '4px 10px', borderRadius: '12px', whiteSpace: 'nowrap' }}>
+                    {getBackendJobStatusLabel(job.status)}
+                  </span>
+                </div>
+
+                {/* Draft report preview */}
+                {job.draft_report && (
+                  <div style={{ fontSize: 'var(--font-size-sm)', padding: 'var(--space-10)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', lineHeight: '1.5' }}>
+                    {job.draft_report.slice(0, 180)}{job.draft_report.length > 180 ? '…' : ''}
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: 'var(--space-8)', marginTop: 'auto' }}>
+                  {(job.status === 'segmentation_pending' || job.status === 'queued' || job.status === 'report_requested') && (
+                    <button
+                      className="btn btn--primary btn--sm btn--full"
+                      onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                      disabled={jobActionLoading}
+                    >
+                      <Icon name="file-text" /> Open Case
+                    </button>
+                  )}
+                  {job.status === 'draft_ready' && (
+                    <button
+                      className="btn btn--primary btn--sm btn--full"
+                      onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                    >
+                      <Icon name="eye" /> Review Report
+                    </button>
+                  )}
+                  {job.status === 'dentist_reviewed' && (
+                    <>
+                      <button
+                        className="btn btn--outline btn--sm"
+                        style={{ flex: 1 }}
+                        onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                      >
+                        <Icon name="eye" /> View
+                      </button>
+                      <button
+                        className="btn btn--primary btn--sm"
+                        style={{ flex: 1 }}
+                        onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                      >
+                        <Icon name="check-circle" /> Finalize
+                      </button>
+                    </>
+                  )}
+                  {job.status === 'finalized' && (
+                    <button
+                      className="btn btn--outline btn--sm btn--full"
+                      onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
+                    >
+                      <Icon name="file-text" /> View Report
+                    </button>
+                  )}
+                  {job.status === 'failed' && (
+                    <button
+                      className="btn btn--outline btn--sm btn--full"
+                      onClick={() => void handleGenerateDraftForJob(job)}
+                      disabled={jobActionLoading}
+                    >
+                      <Icon name="activity" /> Retry
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+            <Icon name="check-circle" />
+            <h3>All Caught Up!</h3>
+            <p>No cases in this category.</p>
+          </div>
+        )}
+      </>
+    );
+  };
+
+  const renderPatientsHub = () => (
+    <>
+      <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Patients</h2>
+
+      <div className="dashboard-overview-row">
+        <div className="card dashboard-overview-card dashboard-overview-card--pending">
+          <div className="card-header">
+            <h3 className="card-title">Pending Patients</h3>
+            <span className="dashboard-count-chip dashboard-count-chip--warning">{pendingRequestsState.length}</span>
+          </div>
+          <div className="dashboard-pending-count">{pendingRequestsState.length}</div>
+          <p className="dashboard-muted">
+            {pendingRequestsState.length === 0 ? 'No pending requests right now.' : 'Requests waiting for approval.'}
+          </p>
+          <button className="btn btn--outline btn--sm btn--full" onClick={() => setActiveView('dentist-pending')}>
+            Review Requests
+          </button>
+        </div>
+
+        <div className="card dashboard-overview-card dashboard-overview-card--patients">
+          <div className="card-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-8)' }}>
+              <h3 className="card-title">My Patients</h3>
+              <span className="dashboard-count-chip">{activePatients.length}</span>
+            </div>
+            <button className="btn btn--outline btn--sm" onClick={() => setActiveView('dentist-patients-list')}>
+              View All
+            </button>
+          </div>
+          {activePatients.length > 0 ? (
+            <div className="dashboard-patients-list">
+              {activePatients.slice(0, 4).map(patient => (
+                <div className="dashboard-patient-row" key={patient.id}>
+                  <div className="dashboard-patient-avatar">
+                    {patient.patient_name.split(' ').map((n: string) => n[0]).join('')}
+                  </div>
+                  <div className="dashboard-patient-info">
+                    <div className="dashboard-patient-name">{patient.patient_name}</div>
+                    <div className="dashboard-patient-meta">{patient.patient_email}</div>
+                  </div>
+                  <div className="dashboard-patient-date">{formatDate(patient.connected_at)}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="dashboard-empty">
+              <p className="dashboard-muted">No active patients yet.</p>
+              <button className="btn btn--primary btn--sm" onClick={() => setActiveView('dentist-pending')}>
+                Review Requests
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="card dashboard-overview-card dashboard-overview-card--inbox">
+          <div className="card-header">
+            <h3 className="card-title">Case Inbox</h3>
+            <button className="btn btn--outline btn--sm" onClick={() => setActiveView('dentist-patients')}>
+              Open Inbox
+            </button>
+          </div>
+          <div className="dashboard-inbox-indicators">
+            <button
+              className={`dashboard-inbox-indicator ${activeInboxTab === 'new-uploads' ? 'is-active' : ''}`}
+              data-variant="new"
+              onClick={() => handleInboxIndicatorClick('new-uploads')}
+              aria-expanded={dashboardInboxExpanded && activeInboxTab === 'new-uploads'}
+            >
+              <span className="dashboard-inbox-indicator__label">{inboxTabLabels['new-uploads']}</span>
+              <span className="dashboard-inbox-indicator__count">{backendJobsLoading ? '…' : backendNewUploads.length}</span>
+            </button>
+            <button
+              className={`dashboard-inbox-indicator ${activeInboxTab === 'needs-review' ? 'is-active' : ''}`}
+              data-variant="review"
+              onClick={() => handleInboxIndicatorClick('needs-review')}
+              aria-expanded={dashboardInboxExpanded && activeInboxTab === 'needs-review'}
+            >
+              <span className="dashboard-inbox-indicator__label">{inboxTabLabels['needs-review']}</span>
+              <span className="dashboard-inbox-indicator__count">{backendJobsLoading ? '…' : backendNeedsReview.length}</span>
+            </button>
+            <button
+              className={`dashboard-inbox-indicator ${activeInboxTab === 'finalized' ? 'is-active' : ''}`}
+              data-variant="final"
+              onClick={() => handleInboxIndicatorClick('finalized')}
+              aria-expanded={dashboardInboxExpanded && activeInboxTab === 'finalized'}
+            >
+              <span className="dashboard-inbox-indicator__label">{inboxTabLabels.finalized}</span>
+              <span className="dashboard-inbox-indicator__count">{backendJobsLoading ? '…' : backendFinalized.length}</span>
+            </button>
+          </div>
+          <p className="dashboard-inbox-hint">Select a status to open the inbox details below.</p>
+        </div>
+      </div>
+
+      <div className={`dashboard-inbox-details ${dashboardInboxExpanded ? 'is-open' : ''}`}>
+        <div className="card dashboard-inbox-details-card">
+          <div className="card-header">
+            <div>
+              <h3 className="card-title">Case Inbox · {inboxTabLabels[activeInboxTab]}</h3>
+              <div className="dashboard-inbox-details-meta">
+                {backendJobsLoading ? 'Loading cases…' : `${getCurrentTabJobs().length} case${getCurrentTabJobs().length === 1 ? '' : 's'}`}
+              </div>
+            </div>
+            <button className="btn btn--outline btn--sm" onClick={() => setDashboardInboxExpanded(false)}>
+              Hide Details
+            </button>
+          </div>
+          {renderInboxJobs({ showRefresh: true, compact: true })}
+        </div>
+      </div>
+    </>
+  );
 
   // Pending request handlers
   const handleAcceptPatient = async (requestId: string) => {
@@ -735,7 +1084,7 @@ const DentistDashboard = () => {
       setReviewingJob(updated);
       setReviewNotes(updated.dentist_notes || '');
       setActionFeedback({ type: 'success', message: decision === 'finalized' ? 'Report finalized successfully.' : 'Report marked as reviewed.' });
-      if (decision === 'finalized') setActiveView('dentist-inbox');
+      if (decision === 'finalized') setActiveView('dentist-patients');
     } catch {
       setActionFeedback({ type: 'error', message: 'Failed to save review. Please try again.' });
     } finally {
@@ -1151,1065 +1500,108 @@ const DentistDashboard = () => {
         return (
           <>
             <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Clinic Dashboard</h2>
-            
-            <div className="stats-grid">
-              <div className="stat-card">
-                <div className="stat-header">
-                  <span className="stat-label">Total Patients</span>
-                  <div className="stat-icon" style={{ background: 'var(--color-bg-1)', color: '#2563EB' }}>
-                    <Icon name="users" />
-                  </div>
+            <div className="dentist-home-top-row">
+              <article className="card dentist-main-card">
+                <div className="card-header">
+                  <h3 className="card-title">Quick actions</h3>
                 </div>
-                <div className="stat-value">{totalPatients}</div>
-                <div className="stat-change positive">Active patients</div>
-              </div>
-              
-              <div className="stat-card">
-                <div className="stat-header">
-                  <span className="stat-label">High-Risk Alerts</span>
-                  <div className="stat-icon" style={{ background: 'var(--color-bg-4)', color: '#EF4444' }}>
-                    <Icon name="alert-triangle" />
-                  </div>
+                <div className="dentist-actions-grid">
+                  <button className="btn btn--primary btn--full" onClick={() => setActiveView('dentist-upload')}>
+                    <Icon name="upload" /> New Analysis
+                  </button>
+                  <button className="btn btn--outline btn--full" onClick={() => setActiveView('dentist-patients')}>
+                    <Icon name="inbox" /> Open Patients Hub
+                  </button>
+                  <button className="btn btn--outline btn--full" onClick={() => setActiveView('dentist-appointments')}>
+                    <Icon name="calendar" /> Appointments
+                  </button>
+                  <button className="btn btn--outline btn--full" onClick={() => setActiveView('dentist-patients')}>
+                    <Icon name="users" /> Patients
+                  </button>
                 </div>
-                <div className="stat-value">{highRiskAlerts}</div>
-                <div className="stat-change">Requires attention</div>
-              </div>
-              
-              <div className="stat-card">
-                <div className="stat-header">
-                  <span className="stat-label">Pending Reviews</span>
-                  <div className="stat-icon" style={{ background: 'var(--color-bg-2)', color: '#F59E0B' }}>
-                    <Icon name="clock" />
-                  </div>
+              </article>
+
+              <article className="card dentist-summary-card">
+                <div className="card-header">
+                  <h3 className="card-title">Practice snapshot</h3>
                 </div>
-                <div className="stat-value">{needsReview.length + newUploads.length}</div>
-                <div className="stat-change">Cases awaiting review</div>
-              </div>
-              
-              <div className="stat-card">
-                <div className="stat-header">
-                  <span className="stat-label">Cases This Month</span>
-                  <div className="stat-icon" style={{ background: 'var(--color-bg-3)', color: '#10B981' }}>
-                    <Icon name="activity" />
-                  </div>
-                </div>
-                <div className="stat-value">{casesThisMonth}</div>
-                <div className="stat-change">Avg {(casesThisMonth / 30).toFixed(1)}/day</div>
-              </div>
+                <ul className="dentist-summary-list">
+                  <li className="dentist-summary-item">
+                    <span className="dentist-summary-item__label">Active Patients</span>
+                    <span className="dentist-summary-item__value">{activePatients.length}</span>
+                  </li>
+                  <li className="dentist-summary-item">
+                    <span className="dentist-summary-item__label">Pending Requests</span>
+                    <span className="dentist-summary-item__value">{pendingRequestsState.length}</span>
+                  </li>
+                  <li className="dentist-summary-item">
+                    <span className="dentist-summary-item__label">Needs Review</span>
+                    <span className="dentist-summary-item__value">{backendNeedsReview.length}</span>
+                  </li>
+                  <li className="dentist-summary-item">
+                    <span className="dentist-summary-item__label">Cases This Month</span>
+                    <span className="dentist-summary-item__value">{casesThisMonth}</span>
+                  </li>
+                </ul>
+              </article>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-24)' }}>
-              <div className="card">
+            <div className="dentist-dashboard-lower-row">
+              <div className="card dentist-today-card">
+                <div className="card-header">
+                  <h3 className="card-title">Today</h3>
+                  <button className="btn btn--outline btn--sm" onClick={() => setActiveView('dentist-appointments')}>
+                    View Schedule
+                  </button>
+                </div>
+                {todaysAppointments.length > 0 ? (
+                  <div className="dashboard-patients-list">
+                    {todaysAppointments.slice(0, 4).map(appointment => (
+                      <div className="dashboard-patient-row" key={appointment.id}>
+                        <div className="dashboard-patient-avatar">{appointment.patientName.split(' ').map(n => n[0]).join('')}</div>
+                        <div className="dashboard-patient-info">
+                          <div className="dashboard-patient-name">{appointment.patientName}</div>
+                          <div className="dashboard-patient-meta">{getAppointmentTypeLabel(appointment.type)}</div>
+                        </div>
+                        <div className="dashboard-patient-date">{formatTime(appointment.time)}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="dashboard-muted">No appointments scheduled for today.</p>
+                )}
+              </div>
+
+              <div className="card dentist-recent-card">
                 <div className="card-header">
                   <h3 className="card-title">Recent Cases</h3>
-                  <button className="btn btn--outline btn--sm" onClick={() => setActiveView('dentist-inbox')}>
+                  <button className="btn btn--outline btn--sm" onClick={() => setActiveView('dentist-patients')}>
                     View All
                   </button>
                 </div>
-                <div className="recent-cases-list">
-                  {dentistCases.slice(0, 5).map(caseItem => (
-                    <div className="recent-case-item" key={caseItem.id} style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: 'var(--space-12)',
-                      borderBottom: '1px solid var(--color-border)'
-                    }}>
-                      <div className="case-patient-info" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
-                        <div className="case-patient-avatar" style={{
-                          width: '40px',
-                          height: '40px',
-                          borderRadius: '50%',
-                          background: 'var(--color-primary)',
-                          color: 'white',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontWeight: 'var(--font-weight-bold)'
-                        }}>
-                          {caseItem.patientName.split(' ').map(n => n[0]).join('')}
-                        </div>
-                        <div>
-                          <div className="case-patient-name" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{caseItem.patientName}</div>
-                          <div className="case-type" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{caseItem.imageType}</div>
-                        </div>
-                      </div>
-                      <div className="case-status" style={{ textAlign: 'right' }}>
-                        <span className={`status-badge ${getStatusClass(caseItem.status)}`}>{getStatusLabel(caseItem.status)}</span>
-                        <div className="case-date" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginTop: 'var(--space-4)' }}>
-                          {formatDate(caseItem.uploadedAt)}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-header">
-                  <h3 className="card-title">Quick Actions</h3>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-12)' }}>
-                  <button className="btn btn--primary btn--full" onClick={() => setActiveView('dentist-upload')}>
-                    <Icon name="upload" />
-                    New Analysis
-                  </button>
-                  <button className="btn btn--outline btn--full" onClick={() => setActiveView('dentist-inbox')}>
-                    <Icon name="inbox" />
-                    Review Pending Cases ({needsReview.length + newUploads.length})
-                  </button>
-                  <button className="btn btn--outline btn--full" onClick={() => setActiveView('dentist-appointments')}>
-                    <Icon name="calendar" />
-                    Appointments ({upcomingAppointments.length})
-                  </button>
-                  <button className="btn btn--outline btn--full" onClick={() => setActiveView('dentist-patients')}>
-                    <Icon name="users" />
-                    Patient Management
-                  </button>
-                  {pendingRequestsState.length > 0 && (
-                    <button className="btn btn--outline btn--full" onClick={() => setActiveView('dentist-pending')} style={{ borderColor: '#F59E0B', color: '#B45309' }}>
-                      <Icon name="user-plus" />
-                      Pending Requests ({pendingRequestsState.length})
-                    </button>
-                  )}
-                </div>
-
-                {/* Today's Appointments Preview */}
-                {todaysAppointments.length > 0 && (
-                  <div style={{ 
-                    marginTop: 'var(--space-16)', 
-                    padding: 'var(--space-12)', 
-                    background: '#FEF3C7', 
-                    borderRadius: 'var(--radius-md)',
-                    borderLeft: '3px solid #F59E0B'
-                  }}>
-                    <div style={{ fontSize: 'var(--font-size-xs)', color: '#B45309', fontWeight: 'var(--font-weight-semibold)', marginBottom: '4px' }}>
-                      TODAY'S SCHEDULE
-                    </div>
-                    <div style={{ fontWeight: 'var(--font-weight-medium)', marginBottom: '4px' }}>
-                      {todaysAppointments.length} Appointment{todaysAppointments.length !== 1 ? 's' : ''}
-                    </div>
-                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                      Next: {todaysAppointments[0].patientName} at {formatTime(todaysAppointments[0].time)}
-                    </div>
-                  </div>
-                )}
+                {renderInboxJobs({ compact: true })}
               </div>
             </div>
           </>
         );
 
-      // ============== DENTIST INBOX ==============
-      case 'dentist-inbox':
-        return (
-          <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Case Inbox</h2>
-            {actionFeedback && (
-              <div className={`alert ${actionFeedback.type}`} style={{ marginBottom: 'var(--space-16)' }}>
-                {actionFeedback.message}
-              </div>
-            )}
-            
-            <div className="inbox-tabs" style={{ display: 'flex', gap: 'var(--space-4)', marginBottom: 'var(--space-24)', borderBottom: '2px solid var(--color-border)', paddingBottom: 'var(--space-4)' }}>
-              <button 
-                className={`inbox-tab ${activeInboxTab === 'new-uploads' ? 'active' : ''}`}
-                onClick={() => setActiveInboxTab('new-uploads')}
-                style={{
-                  padding: 'var(--space-12) var(--space-16)',
-                  border: 'none',
-                  background: activeInboxTab === 'new-uploads' ? 'var(--color-primary)' : 'transparent',
-                  color: activeInboxTab === 'new-uploads' ? 'white' : 'var(--color-text)',
-                  borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
-                  cursor: 'pointer',
-                  fontWeight: 'var(--font-weight-medium)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-8)'
-                }}
-              >
-                New Uploads
-                <span style={{ background: 'var(--color-bg-2)', padding: '2px 8px', borderRadius: '12px', fontSize: 'var(--font-size-xs)' }}>
-                  {newUploads.length}/{backendNewUploads.length}
-                </span>
-              </button>
-              <button 
-                className={`inbox-tab ${activeInboxTab === 'needs-review' ? 'active' : ''}`}
-                onClick={() => setActiveInboxTab('needs-review')}
-                style={{
-                  padding: 'var(--space-12) var(--space-16)',
-                  border: 'none',
-                  background: activeInboxTab === 'needs-review' ? 'var(--color-primary)' : 'transparent',
-                  color: activeInboxTab === 'needs-review' ? 'white' : 'var(--color-text)',
-                  borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
-                  cursor: 'pointer',
-                  fontWeight: 'var(--font-weight-medium)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-8)'
-                }}
-              >
-                Needs Review
-                <span style={{ background: '#FEE2E2', color: '#B91C1C', padding: '2px 8px', borderRadius: '12px', fontSize: 'var(--font-size-xs)' }}>
-                  {needsReview.length}/{backendNeedsReview.length}
-                </span>
-              </button>
-              <button 
-                className={`inbox-tab ${activeInboxTab === 'finalized' ? 'active' : ''}`}
-                onClick={() => setActiveInboxTab('finalized')}
-                style={{
-                  padding: 'var(--space-12) var(--space-16)',
-                  border: 'none',
-                  background: activeInboxTab === 'finalized' ? 'var(--color-primary)' : 'transparent',
-                  color: activeInboxTab === 'finalized' ? 'white' : 'var(--color-text)',
-                  borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
-                  cursor: 'pointer',
-                  fontWeight: 'var(--font-weight-medium)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-8)'
-                }}
-              >
-                Finalized / Sent
-                <span style={{ background: '#D1FAE5', color: '#047857', padding: '2px 8px', borderRadius: '12px', fontSize: 'var(--font-size-xs)' }}>
-                  {finalized.length}/{backendFinalized.length}
-                </span>
-              </button>
-            </div>
-
-            <div className="inbox-content">
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-16)' }}>
-                <button className="btn btn--outline btn--sm" onClick={() => setRefreshKey(prev => prev + 1)}>
-                  <Icon name="activity" /> Refresh
-                </button>
-              </div>
-
-              {backendJobsLoading ? (
-                <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
-                  <h3>Loading cases...</h3>
-                </div>
-              ) : backendJobsError ? (
-                <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
-                  <h3 style={{ color: '#B91C1C' }}>Unable to load cases</h3>
-                  <p>{backendJobsError}</p>
-                </div>
-              ) : getCurrentTabJobs().length > 0 ? (
-                <div className="case-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 'var(--space-16)' }}>
-                  {getCurrentTabJobs().map(job => (
-                    <div className="case-card card" key={job.job_id} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-12)' }}>
-                      {/* Header */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
-                          <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--color-primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'var(--font-weight-bold)', fontSize: 'var(--font-size-lg)' }}>
-                            {job.patient_name ? job.patient_name.split(' ').map((n: string) => n[0]).join('') : '?'}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>{job.patient_name || 'Unknown Patient'}</div>
-                            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>Scan #{job.ct_scan_id} · {formatDate(job.created_at)}</div>
-                          </div>
-                        </div>
-                        <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-xs)', padding: '4px 10px', borderRadius: '12px', whiteSpace: 'nowrap' }}>
-                          {getBackendJobStatusLabel(job.status)}
-                        </span>
-                      </div>
-
-                      {/* Draft report preview */}
-                      {job.draft_report && (
-                        <div style={{ fontSize: 'var(--font-size-sm)', padding: 'var(--space-10)', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', lineHeight: '1.5' }}>
-                          {job.draft_report.slice(0, 180)}{job.draft_report.length > 180 ? '…' : ''}
-                        </div>
-                      )}
-
-                      {/* Actions */}
-                      <div style={{ display: 'flex', gap: 'var(--space-8)', marginTop: 'auto' }}>
-                        {(job.status === 'segmentation_pending' || job.status === 'queued' || job.status === 'report_requested') && (
-                          <button
-                            className="btn btn--primary btn--sm btn--full"
-                            onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
-                            disabled={jobActionLoading}
-                          >
-                            <Icon name="file-text" /> Open Case
-                          </button>
-                        )}
-                        {job.status === 'draft_ready' && (
-                          <button
-                            className="btn btn--primary btn--sm btn--full"
-                            onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
-                          >
-                            <Icon name="eye" /> Review Report
-                          </button>
-                        )}
-                        {job.status === 'dentist_reviewed' && (
-                          <>
-                            <button
-                              className="btn btn--outline btn--sm"
-                              style={{ flex: 1 }}
-                              onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
-                            >
-                              <Icon name="eye" /> View
-                            </button>
-                            <button
-                              className="btn btn--primary btn--sm"
-                              style={{ flex: 1 }}
-                              onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
-                            >
-                              <Icon name="check-circle" /> Finalize
-                            </button>
-                          </>
-                        )}
-                        {job.status === 'finalized' && (
-                          <button
-                            className="btn btn--outline btn--sm btn--full"
-                            onClick={() => { setReviewingJob(job); setReviewNotes(job.dentist_notes || ''); setActiveView('case-detail'); }}
-                          >
-                            <Icon name="file-text" /> View Report
-                          </button>
-                        )}
-                        {job.status === 'failed' && (
-                          <button
-                            className="btn btn--outline btn--sm btn--full"
-                            onClick={() => void handleGenerateDraftForJob(job)}
-                            disabled={jobActionLoading}
-                          >
-                            <Icon name="activity" /> Retry
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
-                  <Icon name="check-circle" />
-                  <h3>All Caught Up!</h3>
-                  <p>No cases in this category.</p>
-                </div>
-              )}
-
-              {/* kept for legacy mock cases — hidden but not deleted */}
-              {false && getCurrentTabCases().length > 0 ? (
-                <div className="case-cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: 'var(--space-16)' }}>
-                  {getCurrentTabCases().map(caseItem => (
-                    <div className={`case-card card ${caseItem.aiFindings.some(f => f.urgency === 'high') ? 'has-urgent' : ''}`} key={caseItem.id} style={{
-                      borderLeft: caseItem.aiFindings.some(f => f.urgency === 'high') ? '4px solid #EF4444' : 'none'
-                    }}>
-                      <div className="case-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-12)' }}>
-                        <div className="case-patient" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
-                          <div className="case-avatar" style={{
-                            width: '48px',
-                            height: '48px',
-                            borderRadius: '50%',
-                            background: 'var(--color-primary)',
-                            color: 'white',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontWeight: 'var(--font-weight-bold)'
-                          }}>
-                            {caseItem.patientName.split(' ').map(n => n[0]).join('')}
-                          </div>
-                          <div>
-                            <div className="case-patient-name" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{caseItem.patientName}</div>
-                            <div className="case-meta" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{caseItem.imageType}</div>
-                          </div>
-                        </div>
-                        <span className={`status-badge ${getStatusClass(caseItem.status)}`}>{getStatusLabel(caseItem.status)}</span>
-                      </div>
-                      
-                      <div className="case-card-body" style={{ marginBottom: 'var(--space-16)' }}>
-                        <div className="case-stats" style={{ display: 'flex', gap: 'var(--space-16)', marginBottom: 'var(--space-12)' }}>
-                          <div className="case-stat" style={{ textAlign: 'center' }}>
-                            <span className="stat-number" style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--color-primary)' }}>{caseItem.aiFindings.length}</span>
-                            <span className="stat-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>AI Findings</span>
-                          </div>
-                          {caseItem.aiFindings.filter(f => f.urgency === 'high').length > 0 && (
-                            <div className="case-stat urgent" style={{ textAlign: 'center' }}>
-                              <span className="stat-number" style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)', color: '#EF4444' }}>{caseItem.aiFindings.filter(f => f.urgency === 'high').length}</span>
-                              <span className="stat-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>High Priority</span>
-                            </div>
-                          )}
-                        </div>
-                        <div className="case-date" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                          <Icon name="clock" /> Uploaded {formatDate(caseItem.uploadedAt)}
-                        </div>
-                      </div>
-                      
-                      <div className="case-card-actions">
-                        {(caseItem.status === 'NEEDS_REVIEW' || caseItem.status === 'AI_ANALYZED') ? (
-                          <button className="btn btn--primary btn--full" onClick={() => handleReviewCase(caseItem)}>
-                            <Icon name="eye" /> Review Case
-                          </button>
-                        ) : caseItem.status === 'FINALIZED' ? (
-                          <button className="btn btn--success btn--full" onClick={() => void handleSendToPatient(caseItem.id, caseItem.patientExplanation || '')}>
-                            <Icon name="send" /> Send to Patient
-                          </button>
-                        ) : (
-                          <button className="btn btn--outline btn--full" onClick={() => handleReviewCase(caseItem)}>
-                            <Icon name="eye" /> View Details
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
-                  <Icon name="check-circle" />
-                  <h3>All Caught Up!</h3>
-                  <p>No cases in this category.</p>
-                </div>
-              )}
-            </div>
-
-          </>
-        );
-
-      // ============== CASE DETAIL ==============
-      case 'case-detail': {
-        if (!reviewingJob) { setActiveView('dentist-inbox'); return null; }
-        const job = reviewingJob;
-        const imageUrl = job.annotated_image_url || job.scan_file_url;
-        const isFinalized = job.status === 'finalized';
-        const canGenerate = job.status === 'queued' || job.status === 'segmentation_pending' || job.status === 'report_requested';
-        return (
-          <>
-            {/* Header */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-16)', marginBottom: 'var(--space-24)' }}>
-              <button className="btn btn--outline btn--sm" onClick={() => { setActiveView('dentist-inbox'); setReviewingJob(null); setReviewNotes(''); }}>
-                <Icon name="arrow-left" /> Back to Inbox
-              </button>
-              <div style={{ flex: 1 }}>
-                <h2 style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 'var(--font-weight-bold)', margin: 0 }}>
-                  {job.patient_name || 'Unknown Patient'} — Scan #{job.ct_scan_id}
-                </h2>
-                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                  Uploaded {formatDate(job.created_at)}
-                </div>
-              </div>
-              <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-sm)', padding: '6px 14px' }}>
-                {getBackendJobStatusLabel(job.status)}
-              </span>
-            </div>
-
-            {actionFeedback && (
-              <div className={`alert ${actionFeedback.type}`} style={{ marginBottom: 'var(--space-16)' }}>
-                {actionFeedback.message}
-              </div>
-            )}
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-24)', alignItems: 'start' }}>
-              {/* LEFT — Scan viewer */}
-              <div className="card" style={{ padding: 'var(--space-20)' }}>
-                <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-16)' }}>
-                  CT Scan
-                  {job.annotated_image_url && (
-                    <span style={{ marginLeft: 'var(--space-8)', fontSize: 'var(--font-size-xs)', color: '#047857', background: '#D1FAE5', padding: '2px 8px', borderRadius: '12px' }}>
-                      AI Annotated
-                    </span>
-                  )}
-                </h3>
-                {imageUrl ? (
-                  <AuthenticatedScanImage
-                    src={imageUrl}
-                    alt="CT Scan"
-                    style={{ width: '100%', borderRadius: 'var(--radius-md)', display: 'block', background: '#000' }}
-                  />
-                ) : (
-                  <div style={{ width: '100%', aspectRatio: '1', background: '#0F172A', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 'var(--space-12)' }}>
-                    <Icon name="activity" />
-                    <div style={{ fontSize: 'var(--font-size-sm)', textAlign: 'center', maxWidth: '200px', lineHeight: 1.5 }}>
-                      AI segmentation overlay will appear here once the model is integrated.
-                    </div>
-                  </div>
-                )}
-                {!job.annotated_image_url && imageUrl && (
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginTop: 'var(--space-8)', textAlign: 'center' }}>
-                    Showing original scan. AI segmentation overlay coming soon.
-                  </p>
-                )}
-              </div>
-
-              {/* RIGHT — Report */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-16)' }}>
-                {canGenerate && (
-                  <button
-                    className="btn btn--primary btn--full"
-                    onClick={() => void handleGenerateDraftForJob(job)}
-                    disabled={jobActionLoading}
-                    style={{ fontSize: 'var(--font-size-base)' }}
-                  >
-                    <Icon name="file-text" /> {jobActionLoading ? 'Generating…' : 'Generate AI Report'}
-                  </button>
-                )}
-
-                <div className="card" style={{ padding: 'var(--space-20)' }}>
-                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>AI Draft Report</h3>
-                  {job.draft_report ? (
-                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.8', color: 'var(--color-text)', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', maxHeight: '260px', overflowY: 'auto' }}>
-                      {job.draft_report}
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
-                      {canGenerate ? 'Click "Generate AI Report" above to create the draft.' : 'No draft report available.'}
-                    </p>
-                  )}
-                </div>
-
-                <div className="card" style={{ padding: 'var(--space-20)' }}>
-                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
-                    Dentist Notes
-                    {!isFinalized && <span style={{ marginLeft: 'var(--space-8)', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', fontWeight: 'normal' }}>(optional)</span>}
-                  </h3>
-                  {isFinalized ? (
-                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.7', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', color: 'var(--color-text)' }}>
-                      {job.dentist_notes || '—'}
-                    </div>
-                  ) : (
-                    <textarea
-                      value={reviewNotes}
-                      onChange={e => setReviewNotes(e.target.value)}
-                      placeholder="Add clinical observations, corrections, or recommendations…"
-                      style={{ width: '100%', minHeight: '120px', padding: 'var(--space-12)', borderRadius: 'var(--radius-md)', border: '2px solid var(--color-border)', fontSize: 'var(--font-size-sm)', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
-                    />
-                  )}
-                </div>
-
-                {!isFinalized && (
-                  <div style={{ display: 'flex', gap: 'var(--space-12)' }}>
-                    {job.status === 'draft_ready' && (
-                      <button className="btn btn--outline" style={{ flex: 1 }} onClick={() => void handleReviewJobAction('reviewed')} disabled={jobActionLoading}>
-                        <Icon name="check" /> Mark Reviewed
-                      </button>
-                    )}
-                    <button
-                      className="btn btn--primary"
-                      style={{ flex: 1 }}
-                      onClick={() => void handleReviewJobAction('finalized')}
-                      disabled={jobActionLoading || canGenerate}
-                    >
-                      <Icon name="check-circle" /> {jobActionLoading ? 'Saving…' : 'Finalize Report'}
-                    </button>
-                  </div>
-                )}
-                {isFinalized && (
-                  <div style={{ padding: 'var(--space-12)', background: '#D1FAE5', color: '#047857', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)', display: 'flex', alignItems: 'center', gap: 'var(--space-8)' }}>
-                    <Icon name="check-circle" /> Report finalized on {job.completed_at ? formatDate(job.completed_at) : '—'}
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        );
-      }
-
-      // ============== DENTIST UPLOAD (Panoramic Only) ==============
-      case 'dentist-upload':
-        return (
-          <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>New AI Analysis</h2>
-            {actionFeedback && (
-              <div className={`alert ${actionFeedback.type}`} style={{ marginBottom: 'var(--space-16)' }}>
-                {actionFeedback.message}
-              </div>
-            )}
-            
-            <div className="alert info" style={{ 
-              display: 'flex', 
-              alignItems: 'flex-start', 
-              gap: 'var(--space-12)', 
-              padding: 'var(--space-16)', 
-              background: 'var(--color-bg-1)', 
-              borderRadius: 'var(--radius-md)',
-              marginBottom: 'var(--space-24)',
-              borderLeft: '4px solid var(--color-primary)'
-            }}>
-              <Icon name="info" />
-              <div>
-                <strong>Accepted Image Type:</strong> Panoramic X-ray (OPG) only<br />
-                <span style={{ color: 'var(--color-text-secondary)' }}>This system is optimized for panoramic radiograph analysis.</span>
-              </div>
-            </div>
-
-            {/* Status Messages */}
-            {uploadStatus === 'complete' && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-12)',
-                padding: 'var(--space-16)',
-                background: '#D1FAE5',
-                borderRadius: 'var(--radius-md)',
-                marginBottom: 'var(--space-16)',
-                color: '#047857'
-              }}>
-                <Icon name="check-circle" />
-                <div>
-                  <strong>Upload Complete!</strong> Case created and AI analysis complete. Redirecting to inbox...
-                </div>
-              </div>
-            )}
-
-            <div className="card" style={{ marginBottom: 'var(--space-24)' }}>
-              <div className="card-header">
-                <h3 className="card-title">Select Patient</h3>
-              </div>
-              <select 
-                className="form-select" 
-                style={{ width: '100%', padding: 'var(--space-12)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}
-                value={selectedPatientForUpload}
-                onChange={(e) => setSelectedPatientForUpload(e.target.value)}
-              >
-                <option value="">-- Select Patient --</option>
-                {activePatients.map(p => (
-                  <option key={p.id} value={String(p.id)}>{p.patient_name} ({p.patient_email})</option>
-                ))}
-              </select>
-              {!selectedPatientForUpload && uploadedFile && (
-                <div style={{ color: '#B45309', fontSize: 'var(--font-size-sm)', marginTop: 'var(--space-8)' }}>
-                  ⚠️ Please select a patient before uploading
-                </div>
-              )}
-            </div>
-
-            <div className="card">
-              <div className="card-header">
-                <h3 className="card-title">Upload Panoramic X-Ray (OPG)</h3>
-              </div>
-              
-              <div className="image-type-info" style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 'var(--space-12)', 
-                padding: 'var(--space-16)', 
-                background: 'var(--color-bg-1)', 
-                borderRadius: 'var(--radius-md)',
-                marginBottom: 'var(--space-16)'
-              }}>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  background: 'var(--color-primary)', 
-                  borderRadius: 'var(--radius-md)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'white'
-                }}>
-                  <Icon name="tooth" />
-                </div>
-                <div>
-                  <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>Panoramic X-Ray (OPG)</div>
-                  <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                    Full mouth view • Optimized for AI analysis
-                  </div>
-                </div>
-              </div>
-
-              {/* Hidden file input */}
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleInputChange}
-                accept="image/jpeg,image/png,image/jpg,.dcm"
-                style={{ display: 'none' }}
-              />
-              
-              {/* Upload Area or Preview */}
-              {!uploadedFile ? (
-                <div 
-                  className={`upload-area ${isDragging ? 'dragging' : ''}`}
-                  style={{
-                    border: `2px dashed ${isDragging ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                    borderRadius: 'var(--radius-lg)',
-                    padding: 'var(--space-48)',
-                    textAlign: 'center',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    background: isDragging ? 'rgba(59, 130, 246, 0.05)' : 'transparent'
-                  }}
-                  onClick={() => fileInputRef.current?.click()}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                >
-                  <div className="upload-icon" style={{ marginBottom: 'var(--space-16)', color: isDragging ? 'var(--color-primary)' : 'inherit' }}>
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                      <polyline points="17 8 12 3 7 8"/>
-                      <line x1="12" y1="3" x2="12" y2="15"/>
-                    </svg>
-                  </div>
-                  <div className="upload-text" style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-medium)', marginBottom: 'var(--space-8)' }}>
-                    {isDragging ? 'Drop your file here' : 'Drag and drop Panoramic X-ray here'}
-                  </div>
-                  <div className="upload-hint" style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-16)' }}>
-                    Formats: JPG, PNG, DICOM. Max: 10MB
-                  </div>
-                  <button className="btn btn--outline" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
-                    Browse Files
-                  </button>
-                </div>
-              ) : (
-                <div className="upload-preview" style={{ marginBottom: 'var(--space-16)' }}>
-                  <div style={{
-                    display: 'flex',
-                    gap: 'var(--space-20)',
-                    padding: 'var(--space-16)',
-                    background: 'var(--color-bg-1)',
-                    borderRadius: 'var(--radius-lg)',
-                    marginBottom: 'var(--space-16)'
-                  }}>
-                    <div style={{
-                      width: '200px',
-                      height: '150px',
-                      borderRadius: 'var(--radius-md)',
-                      overflow: 'hidden',
-                      background: '#000',
-                      flexShrink: 0
-                    }}>
-                      {uploadPreview && (
-                        <img 
-                          src={uploadPreview} 
-                          alt="Preview" 
-                          style={{ width: '100%', height: '100%', objectFit: 'contain' }} 
-                        />
-                      )}
-                    </div>
-                    
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-8)' }}>
-                        {uploadedFile.name}
-                      </div>
-                      <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-12)' }}>
-                        Size: {(uploadedFile.size / 1024 / 1024).toFixed(2)} MB • Type: {uploadedFile.type || 'DICOM'}
-                      </div>
-                      
-                      {selectedPatientForUpload && (
-                        <div style={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          gap: 'var(--space-8)', 
-                          marginBottom: 'var(--space-12)',
-                          padding: 'var(--space-8)',
-                          background: 'var(--color-bg-2)',
-                          borderRadius: 'var(--radius-sm)'
-                        }}>
-                          <Icon name="users" />
-                          <span>{activePatients.find(p => String(p.id) === selectedPatientForUpload)?.patient_name}</span>
-                        </div>
-                      )}
-                      
-                      {(uploadStatus === 'uploading' || uploadStatus === 'processing') && (
-                        <div style={{ marginBottom: 'var(--space-12)' }}>
-                          <div style={{ 
-                            display: 'flex', 
-                            justifyContent: 'space-between', 
-                            marginBottom: 'var(--space-4)',
-                            fontSize: 'var(--font-size-sm)'
-                          }}>
-                            <span>{uploadStatus === 'uploading' ? 'Uploading...' : 'AI Analysis in progress...'}</span>
-                            <span>{uploadStatus === 'uploading' ? `${uploadProgress}%` : ''}</span>
-                          </div>
-                          <div style={{
-                            height: '8px',
-                            background: 'var(--color-border)',
-                            borderRadius: '4px',
-                            overflow: 'hidden'
-                          }}>
-                            <div style={{
-                              height: '100%',
-                              width: uploadStatus === 'processing' ? '100%' : `${uploadProgress}%`,
-                              background: uploadStatus === 'processing' 
-                                ? 'linear-gradient(90deg, var(--color-primary) 0%, transparent 50%, var(--color-primary) 100%)' 
-                                : 'var(--color-primary)',
-                              borderRadius: '4px',
-                              transition: 'width 0.3s ease',
-                              animation: uploadStatus === 'processing' ? 'shimmer 1.5s infinite' : 'none'
-                            }}></div>
-                          </div>
-                          {uploadStatus === 'processing' && (
-                            <div style={{ 
-                              fontSize: 'var(--font-size-xs)', 
-                              color: 'var(--color-text-secondary)', 
-                              marginTop: 'var(--space-4)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 'var(--space-8)'
-                            }}>
-                              <span className="spinner"></span>
-                              Detecting dental conditions using AI...
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      
-                      {uploadStatus === 'idle' && (
-                        <span style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                          padding: '4px 12px',
-                          background: '#D1FAE5',
-                          color: '#047857',
-                          borderRadius: 'var(--radius-md)',
-                          fontSize: 'var(--font-size-sm)'
-                        }}>
-                          <Icon name="check-circle" /> Ready to upload
-                        </span>
-                      )}
-                      {uploadStatus === 'error' && (
-                        <span style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                          padding: '4px 12px',
-                          background: '#FEE2E2',
-                          color: '#B91C1C',
-                          borderRadius: 'var(--radius-md)',
-                          fontSize: 'var(--font-size-sm)'
-                        }}>
-                          <Icon name="x" /> {uploadError ?? 'Upload failed'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: 'var(--space-12)' }}>
-                    {(uploadStatus === 'idle' || uploadStatus === 'error') && (
-                      <>
-                        <button 
-                          className="btn btn--primary" 
-                          onClick={handleUpload}
-                          style={{ flex: 1 }}
-                          disabled={!selectedPatientForUpload}
-                        >
-                          <Icon name="upload" /> Upload & Analyze
-                        </button>
-                        <button className="btn btn--outline" onClick={clearUpload}>
-                          <Icon name="x" /> Cancel
-                        </button>
-                      </>
-                    )}
-                    {(uploadStatus === 'uploading' || uploadStatus === 'processing') && (
-                      <button className="btn btn--outline" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>
-                        Processing...
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </>
-        );
-
-      // ============== DENTIST PENDING PATIENTS ==============
-      case 'dentist-pending':
-        return (
-          <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Pending Patient Requests</h2>
-            
-            {/* Action Feedback Toast */}
-            {actionFeedback && (
-              <div style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 'var(--space-12)', 
-                padding: 'var(--space-16)', 
-                background: actionFeedback.type === 'success' ? '#D1FAE5' : actionFeedback.type === 'error' ? '#FEE2E2' : '#DBEAFE',
-                color: actionFeedback.type === 'success' ? '#047857' : actionFeedback.type === 'error' ? '#B91C1C' : '#1D4ED8',
-                borderRadius: 'var(--radius-md)',
-                marginBottom: 'var(--space-16)',
-                borderLeft: `4px solid ${actionFeedback.type === 'success' ? '#10B981' : actionFeedback.type === 'error' ? '#EF4444' : '#3B82F6'}`
-              }}>
-                <Icon name={actionFeedback.type === 'success' ? 'check-circle' : actionFeedback.type === 'error' ? 'x-circle' : 'info'} />
-                <span>{actionFeedback.message}</span>
-              </div>
-            )}
-            
-            {pendingRequestsState.length > 0 && (
-              <div className="alert info" style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 'var(--space-12)', 
-                padding: 'var(--space-16)', 
-                background: 'var(--color-bg-1)', 
-                borderRadius: 'var(--radius-md)',
-                marginBottom: 'var(--space-24)',
-                borderLeft: '4px solid var(--color-primary)'
-              }}>
-                <Icon name="user-plus" />
-                <span>You have <strong>{pendingRequestsState.length}</strong> pending patient request(s) awaiting your review.</span>
-              </div>
-            )}
-            
-            <div className="card">
-              <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 className="card-title">Approval Queue</h3>
-                <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
-                  {pendingRequestsState.length} request(s)
-                </span>
-              </div>
-              
-              {pendingRequestsState.length > 0 ? (
-                <div className="pending-patients-list">
-                  {pendingRequestsState.map(request => (
-                    <div className="pending-patient-card" key={request.id} style={{
-                      padding: 'var(--space-20)',
-                      borderBottom: '1px solid var(--color-border)',
-                      transition: 'background 0.2s ease'
-                    }}>
-                      <div className="pending-patient-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-16)', marginBottom: 'var(--space-16)' }}>
-                        <div className="patient-avatar pending" style={{
-                          width: '56px',
-                          height: '56px',
-                          borderRadius: '50%',
-                          background: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)',
-                          color: '#B45309',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontWeight: 'var(--font-weight-bold)',
-                          fontSize: 'var(--font-size-lg)',
-                          boxShadow: '0 2px 8px rgba(245, 158, 11, 0.2)'
-                        }}>
-                          {request.patient_name.split(' ').map((n: string) => n[0]).join('')}
-                        </div>
-                        <div className="pending-patient-info" style={{ flex: 1 }}>
-                          <div className="patient-name" style={{ fontWeight: 'var(--font-weight-semibold)', fontSize: 'var(--font-size-lg)', marginBottom: 'var(--space-4)' }}>{request.patient_name}</div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-8)', marginBottom: 'var(--space-4)' }}>
-                            <Icon name="mail" />
-                            <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{request.patient_email}</span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-8)' }}>
-                            <Icon name="calendar" />
-                            <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>Requested: {formatDate(request.connected_at)}</span>
-                          </div>
-                        </div>
-                        <span className="status-badge pending" style={{ 
-                          background: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)', 
-                          color: '#B45309', 
-                          padding: '6px 14px', 
-                          borderRadius: '20px', 
-                          fontSize: 'var(--font-size-xs)',
-                          fontWeight: 'var(--font-weight-semibold)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 'var(--space-4)'
-                        }}>
-                          <Icon name="clock" /> Pending
-                        </span>
-                      </div>
-                      
-                      <div className="pending-actions" style={{ display: 'flex', gap: 'var(--space-12)', flexWrap: 'wrap' }}>
-                        <button
-                          className="btn btn--success btn--sm"
-                          onClick={() => void handleAcceptPatient(String(request.id))}
-                          style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', padding: 'var(--space-8) var(--space-16)' }}
-                        >
-                          <Icon name="user-check" /> Accept Patient
-                        </button>
-                        <button
-                          className="btn btn--danger btn--sm"
-                          onClick={() => void handleRejectPatient(String(request.id))}
-                          style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', padding: 'var(--space-8) var(--space-16)' }}
-                        >
-                          <Icon name="user-x" /> Decline
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
-                  <div style={{ 
-                    width: '80px', 
-                    height: '80px', 
-                    background: '#D1FAE5', 
-                    borderRadius: '50%', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center',
-                    margin: '0 auto var(--space-16)',
-                    color: '#10B981'
-                  }}>
-                    <Icon name="check-circle" />
-                  </div>
-                  <h3 style={{ marginBottom: 'var(--space-8)' }}>All Caught Up!</h3>
-                  <p style={{ color: 'var(--color-text-secondary)' }}>No pending patient requests to review.</p>
-                </div>
-              )}
-            </div>
-          </>
-        );
-
-      // ============== DENTIST PATIENTS ==============
+      // ============== DENTIST PATIENTS HUB ==============
       case 'dentist-patients':
         return (
-          <>
-            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>My Patients</h2>
-            
-            <div className="card">
-              <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 className="card-title">Active Patients ({activePatients.length})</h3>
-                <input type="text" className="form-input" placeholder="Search patients..." style={{ width: '250px', padding: 'var(--space-8) var(--space-12)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }} />
-              </div>
-
-              {activePatients.length > 0 ? (
-                <div className="patients-list">
-                  {activePatients.map(patient => (
-                      <div className="patient-card" key={patient.id} style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: 'var(--space-16)',
-                        borderBottom: '1px solid var(--color-border)',
-                        gap: 'var(--space-16)'
-                      }}>
-                        <div className="patient-avatar" style={{
-                          width: '48px',
-                          height: '48px',
-                          borderRadius: '50%',
-                          background: 'var(--color-primary)',
-                          color: 'white',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontWeight: 'var(--font-weight-bold)'
-                        }}>
-                          {patient.patient_name.split(' ').map((n: string) => n[0]).join('')}
-                        </div>
-                        <div className="patient-info" style={{ flex: 1 }}>
-                          <div className="patient-name" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{patient.patient_name}</div>
-                          <div className="patient-meta" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{patient.patient_email}</div>
-                          <div className="patient-meta" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>{patient.patient_phone || 'No phone'}</div>
-                        </div>
-                        <div className="patient-stats" style={{ display: 'flex', gap: 'var(--space-24)' }}>
-                          <div className="patient-stat" style={{ textAlign: 'center' }}>
-                            <span className="stat-label" style={{ display: 'block', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>Connected</span>
-                            <span className="stat-value" style={{ fontWeight: 'var(--font-weight-semibold)' }}>{formatDate(patient.connected_at)}</span>
-                          </div>
-                        </div>
-                        <div className="patient-actions" style={{ display: 'flex', gap: 'var(--space-8)' }}>
-                          <button className="btn btn--primary btn--sm">
-                            <Icon name="file-text" /> View Details
-                          </button>
-                          <button className="btn btn--outline btn--sm" onClick={() => setActiveView('dentist-upload')}>
-                            <Icon name="upload" /> New Analysis
-                          </button>
-                        </div>
-                      </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="empty-state" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
-                  <Icon name="users" />
-                  <h3>No Active Patients</h3>
-                  <p>Patients will appear here once you approve their requests.</p>
-                  <button className="btn btn--primary" onClick={() => setActiveView('dentist-pending')}>
-                    View Pending Requests
-                  </button>
-                </div>
-              )}
-            </div>
-          </>
+          <PatientsHub
+            backendJobs={backendJobs}
+            activePatients={activePatients}
+            pendingLinks={pendingRequestsState}
+            loading={backendJobsLoading}
+            onOpenCase={(job) => {
+              setReviewingJob(job);
+              setReviewNotes(job.dentist_notes || '');
+              setActiveView('case-detail');
+            }}
+            onAcceptPatient={handleAcceptPatient}
+            onRejectPatient={handleRejectPatient}
+            onRefresh={() => setRefreshKey(prev => prev + 1)}
+          />
         );
 
       // ============== DENTIST APPOINTMENTS ==============
@@ -2287,12 +1679,346 @@ const DentistDashboard = () => {
               </div>
             </div>
 
+            {appointmentsLoading && (
+              <div className="card" style={{ marginBottom: 'var(--space-16)', padding: 'var(--space-16)' }}>
+                Loading appointments...
+              </div>
+            )}
+            {appointmentsError && (
+              <div className="card" style={{ marginBottom: 'var(--space-16)', padding: 'var(--space-16)', color: '#B91C1C' }}>
+                {appointmentsError}
+              </div>
+            )}
+
             <AppointmentList
               appointments={appointments}
               userRole="dentist"
-              onRefresh={() => setAppointments(getAppointmentsByDentist(currentDentistId))}
+              onRefresh={() => void loadAppointments()}
               onScheduleNew={() => setShowScheduler(true)}
+              onUpdateStatus={handleUpdateAppointmentStatus}
             />
+          </>
+        );
+
+      // ============== DENTIST UPLOAD ==============
+      case 'dentist-upload':
+        return (
+          <>
+            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>New Analysis</h2>
+
+            <div className="card" style={{ marginBottom: 'var(--space-24)' }}>
+              <div className="card-header">
+                <h3 className="card-title">Upload CT Scan</h3>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-16)' }}>
+                <div>
+                  <label style={{ display: 'block', fontWeight: 'var(--font-weight-medium)', marginBottom: 'var(--space-8)' }}>
+                    Select Patient
+                  </label>
+                  <select
+                    value={selectedPatientForUpload}
+                    onChange={(e) => setSelectedPatientForUpload(e.target.value)}
+                    style={{
+                      padding: 'var(--space-12) var(--space-16)',
+                      borderRadius: 'var(--radius-md)',
+                      border: '2px solid var(--color-border)',
+                      fontSize: 'var(--font-size-base)',
+                      minWidth: '300px',
+                      background: 'var(--color-bg)'
+                    }}
+                  >
+                    <option value="">-- Select a patient --</option>
+                    {activePatients.map(patient => (
+                      <option key={patient.id} value={patient.id}>{patient.patient_name}</option>
+                    ))}
+                  </select>
+                  {activePatients.length === 0 && (
+                    <p style={{ marginTop: 'var(--space-8)', color: 'var(--color-text-secondary)' }}>
+                      No connected patients yet. Approve requests to upload scans.
+                    </p>
+                  )}
+                </div>
+
+                <div
+                  className={`upload-dropzone${isDragging ? ' is-dragging' : ''}`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  style={{
+                    border: '2px dashed var(--color-border)',
+                    borderRadius: 'var(--radius-lg)',
+                    padding: 'var(--space-32)',
+                    textAlign: 'center',
+                    background: isDragging ? 'var(--color-bg-1)' : 'transparent'
+                  }}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.dcm"
+                    onChange={handleInputChange}
+                    style={{ display: 'none' }}
+                  />
+
+                  {uploadPreview ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-12)', alignItems: 'center' }}>
+                      <img
+                        src={uploadPreview}
+                        alt="Preview"
+                        style={{ maxWidth: '280px', borderRadius: 'var(--radius-md)' }}
+                      />
+                      <button className="btn btn--outline btn--sm" onClick={clearUpload}>
+                        Remove File
+                      </button>
+                    </div>
+                  ) : (
+                    <div>
+                      <Icon name="upload" />
+                      <p style={{ marginTop: 'var(--space-12)' }}>Drag and drop a scan here, or</p>
+                      <button className="btn btn--outline btn--sm" onClick={() => fileInputRef.current?.click()}>
+                        Choose File
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {uploadedFile && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <strong>{uploadedFile.name}</strong>
+                      <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                        {(uploadedFile.size / (1024 * 1024)).toFixed(2)} MB
+                      </div>
+                    </div>
+                    <span className="status-badge" style={{ textTransform: 'capitalize' }}>{uploadStatus}</span>
+                  </div>
+                )}
+
+                {uploadStatus !== 'idle' && (
+                  <div style={{ width: '100%' }}>
+                    <div style={{ height: '8px', background: 'var(--color-bg-1)', borderRadius: '999px', overflow: 'hidden' }}>
+                      <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'var(--color-primary)' }} />
+                    </div>
+                  </div>
+                )}
+
+                {uploadError && (
+                  <div style={{ color: '#B91C1C', background: '#FEE2E2', padding: 'var(--space-12)', borderRadius: 'var(--radius-md)' }}>
+                    {uploadError}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 'var(--space-12)' }}>
+                  <button
+                    className="btn btn--primary"
+                    onClick={() => void handleUpload()}
+                    disabled={!uploadedFile || !selectedPatientForUpload || uploadStatus === 'uploading' || uploadStatus === 'processing'}
+                  >
+                    <Icon name="upload" /> Upload & Analyze
+                  </button>
+                  <button className="btn btn--outline" onClick={clearUpload} disabled={!uploadedFile}>
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        );
+
+      // ============== DENTIST CASE DETAIL ==============
+      case 'case-detail': {
+        if (!reviewingJob) {
+          setActiveView('dentist-patients');
+          return null;
+        }
+
+        const job = reviewingJob;
+        const imageUrl = job.annotated_image_url || job.scan_file_url;
+        const canGenerateDraft = ['queued', 'segmentation_pending', 'report_requested', 'failed'].includes(job.status);
+        const canReview = job.status === 'draft_ready' || job.status === 'dentist_reviewed';
+        const canFinalize = job.status === 'draft_ready' || job.status === 'dentist_reviewed';
+
+        return (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-16)', marginBottom: 'var(--space-24)' }}>
+              <button
+                className="btn btn--outline btn--sm"
+                onClick={() => { setActiveView('dentist-patients'); setReviewingJob(null); }}
+              >
+                <Icon name="chevron-left" /> Back to Patients
+              </button>
+              <div style={{ flex: 1 }}>
+                <h2 style={{ margin: 0 }}>Scan #{job.ct_scan_id}</h2>
+                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                  Uploaded {formatDate(job.created_at)} · {job.patient_name || 'Unknown Patient'}
+                </div>
+              </div>
+              <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-sm)', padding: '6px 14px' }}>
+                {getBackendJobStatusLabel(job.status)}
+              </span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-24)', alignItems: 'start' }}>
+              <div className="card" style={{ padding: 'var(--space-20)' }}>
+                <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-16)' }}>
+                  Scan Viewer
+                </h3>
+                {imageUrl ? (
+                  <AuthenticatedScanImage
+                    src={imageUrl}
+                    alt="Dental Scan"
+                    style={{ width: '100%', borderRadius: 'var(--radius-md)', display: 'block', background: '#000' }}
+                  />
+                ) : (
+                  <div style={{ width: '100%', aspectRatio: '1', background: '#0F172A', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 'var(--space-12)' }}>
+                    <Icon name="activity" />
+                    <div style={{ fontSize: 'var(--font-size-sm)', textAlign: 'center', maxWidth: '220px', lineHeight: 1.5 }}>
+                      Scan image will appear here once it has been processed.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-16)' }}>
+                <div className="card" style={{ padding: 'var(--space-20)' }}>
+                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
+                    AI Draft Report
+                  </h3>
+                  {job.draft_report ? (
+                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.8', color: 'var(--color-text)', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', maxHeight: '260px', overflowY: 'auto' }}>
+                      {job.draft_report}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
+                      Draft report not available yet.
+                    </p>
+                  )}
+                </div>
+
+                <div className="card" style={{ padding: 'var(--space-20)' }}>
+                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
+                    Dentist Notes
+                  </h3>
+                  <textarea
+                    value={reviewNotes}
+                    onChange={(e) => setReviewNotes(e.target.value)}
+                    placeholder="Add your notes before sending to the patient..."
+                    style={{
+                      width: '100%',
+                      minHeight: '140px',
+                      padding: 'var(--space-12)',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--color-border)',
+                      fontSize: 'var(--font-size-base)',
+                      resize: 'vertical'
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: 'var(--space-12)', flexWrap: 'wrap' }}>
+                  {canGenerateDraft && (
+                    <button
+                      className="btn btn--outline"
+                      onClick={() => void handleGenerateDraftForJob(job)}
+                      disabled={jobActionLoading}
+                    >
+                      <Icon name="activity" /> Generate Draft
+                    </button>
+                  )}
+                  {canReview && (
+                    <button
+                      className="btn btn--outline"
+                      onClick={() => void handleReviewJobAction('reviewed')}
+                      disabled={jobActionLoading}
+                    >
+                      <Icon name="check-circle" /> Mark Reviewed
+                    </button>
+                  )}
+                  {canFinalize && (
+                    <button
+                      className="btn btn--primary"
+                      onClick={() => void handleReviewJobAction('finalized')}
+                      disabled={jobActionLoading}
+                    >
+                      <Icon name="send" /> Finalize & Send
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        );
+      }
+
+      // ============== DENTIST PENDING REQUESTS ==============
+      case 'dentist-pending':
+        return (
+          <>
+            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>Pending Requests</h2>
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">Patient Requests</h3>
+              </div>
+              {pendingRequestsState.length === 0 ? (
+                <div style={{ padding: 'var(--space-24)', color: 'var(--color-text-secondary)' }}>
+                  No pending requests right now.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-12)' }}>
+                  {pendingRequestsState.map(request => (
+                    <div key={request.id} className="card" style={{ padding: 'var(--space-16)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-16)' }}>
+                        <div>
+                          <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>{request.patient_name}</div>
+                          <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)' }}>{request.patient_email}</div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 'var(--space-8)' }}>
+                          <button className="btn btn--outline btn--sm" onClick={() => void handleRejectPatient(String(request.id))}>
+                            Reject
+                          </button>
+                          <button className="btn btn--primary btn--sm" onClick={() => void handleAcceptPatient(String(request.id))}>
+                            Accept
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        );
+
+      // ============== DENTIST PATIENTS LIST ==============
+      case 'dentist-patients-list':
+        return (
+          <>
+            <h2 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--space-24)' }}>My Patients</h2>
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">Active Patients</h3>
+              </div>
+              {activePatients.length === 0 ? (
+                <div style={{ padding: 'var(--space-24)', color: 'var(--color-text-secondary)' }}>
+                  No active patients yet.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 'var(--space-12)', padding: 'var(--space-16)' }}>
+                  {activePatients.map((patient) => (
+                    <div key={patient.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--space-12)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
+                      <div>
+                        <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>{patient.patient_name}</div>
+                        <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)' }}>{patient.patient_email}</div>
+                        <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-xs)' }}>{patient.patient_phone}</div>
+                      </div>
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
+                        Connected {formatDate(patient.connected_at)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </>
         );
 
@@ -2551,9 +2277,12 @@ const DentistDashboard = () => {
 
       // ============== CLINICAL CHARTING ==============
       case 'dentist-charting': {
-        const chartingPatient = myPatients.find(p => p.id === selectedChartingPatient);
-        const patientToothData = selectedChartingPatient ? generateToothData(selectedChartingPatient) : {};
-        const patientConditions = selectedChartingPatient 
+        const chartingPatient = chartingPatients.find(p => p.patient_user_id === selectedChartingPatient);
+        const chartDataAvailable = false;
+        const patientToothData = selectedChartingPatient && chartDataAvailable
+          ? generateToothData(selectedChartingPatient)
+          : {};
+        const patientConditions = selectedChartingPatient && chartDataAvailable
           ? dentistCases
               .filter(c => c.patientId === selectedChartingPatient)
               .flatMap(c => [...c.aiFindings.map(f => ({ tooth: f.tooth, condition: f.condition, source: 'AI' as const })),
@@ -2583,8 +2312,8 @@ const DentistDashboard = () => {
                   }}
                 >
                   <option value="">-- Select a patient --</option>
-                  {myPatients.map(patient => (
-                    <option key={patient.id} value={patient.id}>{patient.name}</option>
+                  {chartingPatients.map(patient => (
+                    <option key={patient.patient_user_id} value={patient.patient_user_id}>{patient.patient_name}</option>
                   ))}
                 </select>
                 
@@ -2601,10 +2330,10 @@ const DentistDashboard = () => {
                       justifyContent: 'center',
                       fontWeight: 'var(--font-weight-bold)'
                     }}>
-                      {chartingPatient.name.split(' ').map(n => n[0]).join('')}
+                      {chartingPatient.patient_name.split(' ').map(n => n[0]).join('')}
                     </div>
                     <div>
-                      <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>{chartingPatient.name}</div>
+                      <div style={{ fontWeight: 'var(--font-weight-semibold)' }}>{chartingPatient.patient_name}</div>
                       <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)' }}>
                         {Object.keys(patientToothData).length} teeth with findings
                       </div>
@@ -2616,40 +2345,41 @@ const DentistDashboard = () => {
 
             {/* Odontogram */}
             {selectedChartingPatient ? (
-              <div style={{ display: 'grid', gridTemplateColumns: selectedTooth ? '2fr 1fr' : '1fr', gap: 'var(--space-24)' }}>
-                <div className="card">
-                  <div className="card-header">
-                    <h3 className="card-title"><Icon name="tooth" /> Dental Chart - {chartingPatient?.name}</h3>
-                  </div>
-                  {renderDentistOdontogram()}
-                </div>
-
-                {/* Tooth Details Panel (when in edit mode and tooth selected) */}
-                {selectedTooth && chartingMode === 'edit' && (
-                  <div className="card" style={{ alignSelf: 'start' }}>
+              chartDataAvailable ? (
+                <div style={{ display: 'grid', gridTemplateColumns: selectedTooth ? '2fr 1fr' : '1fr', gap: 'var(--space-24)' }}>
+                  <div className="card">
                     <div className="card-header">
-                      <h3 className="card-title">Tooth #{selectedTooth}</h3>
+                      <h3 className="card-title"><Icon name="tooth" /> Dental Chart - {chartingPatient?.patient_name}</h3>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-16)' }}>
-                      <div>
-                        <label style={{ display: 'block', fontWeight: 'var(--font-weight-medium)', marginBottom: 'var(--space-8)' }}>
-                          Condition
-                        </label>
-                        {patientToothData[selectedTooth]?.condition ? (
-                          <div style={{ 
-                            padding: 'var(--space-12)', 
-                            background: 'var(--color-bg-1)', 
-                            borderRadius: 'var(--radius-md)',
-                            border: '1px solid var(--color-border)'
-                          }}>
-                            {patientToothData[selectedTooth].condition}
-                          </div>
-                        ) : (
-                          <div style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
-                            No conditions recorded
-                          </div>
-                        )}
+                    {renderDentistOdontogram()}
+                  </div>
+
+                  {/* Tooth Details Panel (when in edit mode and tooth selected) */}
+                  {selectedTooth && chartingMode === 'edit' && (
+                    <div className="card" style={{ alignSelf: 'start' }}>
+                      <div className="card-header">
+                        <h3 className="card-title">Tooth #{selectedTooth}</h3>
                       </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-16)' }}>
+                        <div>
+                          <label style={{ display: 'block', fontWeight: 'var(--font-weight-medium)', marginBottom: 'var(--space-8)' }}>
+                            Condition
+                          </label>
+                          {patientToothData[selectedTooth]?.condition ? (
+                            <div style={{ 
+                              padding: 'var(--space-12)', 
+                              background: 'var(--color-bg-1)', 
+                              borderRadius: 'var(--radius-md)',
+                              border: '1px solid var(--color-border)'
+                            }}>
+                              {patientToothData[selectedTooth].condition}
+                            </div>
+                          ) : (
+                            <div style={{ color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
+                              No conditions recorded
+                            </div>
+                          )}
+                        </div>
 
                       <div>
                         <label style={{ display: 'block', fontWeight: 'var(--font-weight-medium)', marginBottom: 'var(--space-8)' }}>
@@ -2688,16 +2418,25 @@ const DentistDashboard = () => {
                         </div>
                       </div>
 
-                      <button className="btn btn--primary btn--full" onClick={() => {
-                        console.log('Save tooth', selectedTooth, toothNotes[selectedTooth]);
-                        setSelectedTooth(null);
-                      }}>
-                        <Icon name="save" /> Save Changes
-                      </button>
+                        <button className="btn btn--primary btn--full" onClick={() => {
+                          console.log('Save tooth', selectedTooth, toothNotes[selectedTooth]);
+                          setSelectedTooth(null);
+                        }}>
+                          <Icon name="save" /> Save Changes
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              ) : (
+                <div className="card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
+                  <Icon name="tooth" />
+                  <h3 style={{ marginTop: 'var(--space-16)', marginBottom: 'var(--space-8)' }}>Chart Data Not Available</h3>
+                  <p style={{ color: 'var(--color-text-secondary)' }}>
+                    Clinical charting data is not available from the backend yet. Once chart data is connected, it will appear here.
+                  </p>
+                </div>
+              )
             ) : (
               <div className="card" style={{ textAlign: 'center', padding: 'var(--space-48)' }}>
                 <Icon name="tooth" />
@@ -2789,9 +2528,11 @@ const DentistDashboard = () => {
       userId={currentDentistId}
       activeView={activeView}
       onViewChange={setActiveView}
+      onProfileClick={() => setActiveView('dentist-profile')}
       badges={{
-        'dentist-inbox': backendJobs.filter(j => j.status === 'draft_ready' || j.status === 'segmentation_pending').length,
-        'dentist-pending': pendingRequestsState.length,
+        'dentist-patients':
+          backendJobs.filter(j => j.status === 'draft_ready' || j.status === 'segmentation_pending').length +
+          pendingRequestsState.length,
       }}
     >
       {renderContent()}
@@ -2815,9 +2556,11 @@ const DentistDashboard = () => {
           userId={currentDentistId}
           userRole="dentist"
           dentistId={currentDentistId}
+          dentistPatients={dentistPatientsForScheduler}
+          onCreateAppointment={handleCreateAppointment}
           onClose={() => setShowScheduler(false)}
           onSuccess={(appointment) => {
-            setAppointments([...appointments, appointment]);
+            setAppointments((prev) => [appointment, ...prev]);
             setShowScheduler(false);
           }}
         />

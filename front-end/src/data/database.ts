@@ -88,7 +88,7 @@ export interface Appointment {
   date: string;
   time: string;
   duration: number; // in minutes
-  type: 'checkup' | 'cleaning' | 'treatment' | 'consultation' | 'follow-up' | 'emergency';
+  type: string;
   status: 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no-show';
   notes: string | null;
   createdAt: string;
@@ -1116,8 +1116,8 @@ export const addNotification = (notification: Omit<NotificationItem, 'id' | 'cre
   return newNotification;
 };
 
-export const getAppointmentTypeLabel = (type: Appointment['type']): string => {
-  const labels: Record<Appointment['type'], string> = {
+export const getAppointmentTypeLabel = (type: string): string => {
+  const labels: Record<string, string> = {
     'checkup': 'Check-up',
     'cleaning': 'Cleaning',
     'treatment': 'Treatment',
@@ -1125,7 +1125,7 @@ export const getAppointmentTypeLabel = (type: Appointment['type']): string => {
     'follow-up': 'Follow-up',
     'emergency': 'Emergency'
   };
-  return labels[type];
+  return labels[type] ?? (type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Appointment');
 };
 
 export const getAppointmentStatusClass = (status: Appointment['status']): string => {

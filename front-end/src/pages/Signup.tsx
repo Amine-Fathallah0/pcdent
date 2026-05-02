@@ -7,12 +7,14 @@ import { toast } from 'sonner';
 import ThemeToggle from '../components/auth/ThemeToggle';
 import FloatingImageBackground from '../components/auth/FloatingImageBackground';
 import { getFloatingAssetsByTheme } from '../components/auth/floatingImageAssets';
+import { useAuth } from '../context/AuthContext';
 import '../styles/auth-rework.css';
 
 type UserType = 'patient' | 'dentist' | null;
 
 const Signup: React.FC = () => {
   const navigate = useNavigate();
+  const { user, isAuthenticated, isValidating } = useAuth();
   const { resolvedTheme } = useTheme();
   const backgroundAssets = getFloatingAssetsByTheme(resolvedTheme);
   const brandLogo = resolvedTheme === 'dark' ? '/dentalyze/light.png' : '/dentalyze/dark.png';
@@ -32,27 +34,24 @@ const Signup: React.FC = () => {
   });
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const role = localStorage.getItem('user_role');
-
-    if (!token) {
+    if (isValidating || !isAuthenticated) {
       return;
     }
 
-    if (role === 'dentist') {
+    if (user?.role === 'dentist') {
       navigate('/dentist', { replace: true });
       return;
     }
 
-    if (role === 'patient') {
+    if (user?.role === 'patient') {
       navigate('/patient', { replace: true });
       return;
     }
 
-    if (role === 'admin') {
+    if (user?.role === 'admin') {
       navigate('/admin', { replace: true });
     }
-  }, [navigate]);
+  }, [isAuthenticated, isValidating, navigate, user?.role]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData({
@@ -93,32 +92,39 @@ const Signup: React.FC = () => {
       password: formData.password,
     });
 
-    const { access, refresh, user_id, full_name } = loginResponse.data;
+    const { access, refresh, user_id, full_name, is_dentist } = loginResponse.data;
+    const resolvedRole: 'dentist' | 'patient' = typeof is_dentist === 'boolean'
+      ? (is_dentist ? 'dentist' : 'patient')
+      : role;
     localStorage.setItem('access_token', access);
     localStorage.setItem('refresh_token', refresh);
     localStorage.setItem('token', access);
     localStorage.setItem('user_id', user_id);
     localStorage.setItem('full_name', full_name);
-    localStorage.setItem('user_role', role);
+    localStorage.setItem('user_role', resolvedRole);
 
-    navigate(role === 'dentist' ? '/dentist' : '/patient', { replace: true });
+    navigate(resolvedRole === 'dentist' ? '/dentist' : '/patient', { replace: true });
   };
 
   const persistAuthAndRedirect = (
-    data: { access?: string; refresh?: string; user_id?: string; full_name?: string },
+    data: { access?: string; refresh?: string; user_id?: string; full_name?: string; is_dentist?: boolean },
     role: 'dentist' | 'patient'
   ) => {
     if (!data.access || !data.refresh || !data.user_id || !data.full_name) {
       return false;
     }
 
+    const resolvedRole: 'dentist' | 'patient' = typeof data.is_dentist === 'boolean'
+      ? (data.is_dentist ? 'dentist' : 'patient')
+      : role;
+
     localStorage.setItem('access_token', data.access);
     localStorage.setItem('refresh_token', data.refresh);
     localStorage.setItem('token', data.access);
     localStorage.setItem('user_id', data.user_id);
     localStorage.setItem('full_name', data.full_name);
-    localStorage.setItem('user_role', role);
-    navigate(role === 'dentist' ? '/dentist' : '/patient', { replace: true });
+    localStorage.setItem('user_role', resolvedRole);
+    navigate(resolvedRole === 'dentist' ? '/dentist' : '/patient', { replace: true });
     return true;
   };
 

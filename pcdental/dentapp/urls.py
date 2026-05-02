@@ -22,6 +22,7 @@ urlpatterns = [
     path('links/<int:pk>/approve/', views.LinkApproveView.as_view(), name='link-approve'),
     path('links/<int:pk>/reject/', views.LinkRejectView.as_view(), name='link-reject'),
     path('appointments/', views.AppointmentListCreateView.as_view(), name='appointments'),
+    path('appointments/type-suggestions/', views.AppointmentTypeSuggestionsView.as_view(), name='appointment-type-suggestions'),
     path('appointments/<int:pk>/', views.AppointmentDetailView.as_view(), name='appointment-detail'),
     path('ct-scans/', views.CTScanListCreateView.as_view(), name='ct-scans'),
     path('ct-scans/<int:pk>/file/', views.CTScanFileView.as_view(), name='ct-scan-file'),

@@ -14,6 +14,7 @@ interface AppointmentListProps {
   userRole: 'patient' | 'dentist';
   onRefresh: () => void;
   onScheduleNew?: () => void;
+  onUpdateStatus?: (appointmentId: string, status: Appointment['status']) => Promise<void>;
 }
 
 // Icons
@@ -83,8 +84,8 @@ const icons: Record<string, JSX.Element> = {
   )
 };
 
-const getTypeIcon = (type: Appointment['type']): JSX.Element => {
-  const typeIcons: Record<Appointment['type'], JSX.Element> = {
+const getTypeIcon = (type: string): JSX.Element => {
+  const typeIcons: Record<string, JSX.Element> = {
     checkup: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
@@ -107,11 +108,13 @@ const getTypeIcon = (type: Appointment['type']): JSX.Element => {
       </svg>
     )
   };
-  return typeIcons[type] || icons.calendar;
+  return typeIcons[type.toLowerCase()] ?? icons.stethoscope;
 };
 
-const getTypeColor = (type: Appointment['type']): string => {
-  const colors: Record<Appointment['type'], string> = {
+const TYPE_PALETTE = ['#10B981', '#2563EB', '#7C3AED', '#F59E0B', '#6B7280', '#EF4444', '#0891B2', '#D97706', '#059669'];
+
+const getTypeColor = (type: string): string => {
+  const knownColors: Record<string, string> = {
     checkup: '#10B981',
     cleaning: '#2563EB',
     treatment: '#7C3AED',
@@ -119,10 +122,14 @@ const getTypeColor = (type: Appointment['type']): string => {
     'follow-up': '#6B7280',
     emergency: '#EF4444'
   };
-  return colors[type];
+  if (knownColors[type.toLowerCase()]) return knownColors[type.toLowerCase()];
+  // Deterministic color for unknown types based on string hash
+  let hash = 0;
+  for (let i = 0; i < type.length; i++) hash = (hash * 31 + type.charCodeAt(i)) & 0xffff;
+  return TYPE_PALETTE[hash % TYPE_PALETTE.length];
 };
 
-const AppointmentList = ({ appointments, userRole, onRefresh, onScheduleNew }: AppointmentListProps) => {
+const AppointmentList = ({ appointments, userRole, onRefresh, onScheduleNew, onUpdateStatus }: AppointmentListProps) => {
   const [activeTab, setActiveTab] = useState<'upcoming' | 'past'>('upcoming');
   const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -138,25 +145,52 @@ const AppointmentList = ({ appointments, userRole, onRefresh, onScheduleNew }: A
 
   const displayAppointments = activeTab === 'upcoming' ? upcomingAppointments : pastAppointments;
 
-  const handleConfirm = (appointmentId: string) => {
-    updateAppointmentStatus(appointmentId, 'confirmed');
-    setActionFeedback({ type: 'success', message: 'Appointment confirmed!' });
-    onRefresh();
-    setTimeout(() => setActionFeedback(null), 3000);
+  const handleConfirm = async (appointmentId: string) => {
+    try {
+      if (onUpdateStatus) {
+        await onUpdateStatus(appointmentId, 'scheduled');
+      } else {
+        updateAppointmentStatus(appointmentId, 'confirmed');
+      }
+      setActionFeedback({ type: 'success', message: 'Appointment confirmed!' });
+      onRefresh();
+      setTimeout(() => setActionFeedback(null), 3000);
+    } catch {
+      setActionFeedback({ type: 'error', message: 'Unable to confirm appointment.' });
+      setTimeout(() => setActionFeedback(null), 3000);
+    }
   };
 
-  const handleCancel = (appointmentId: string) => {
-    updateAppointmentStatus(appointmentId, 'cancelled');
-    setActionFeedback({ type: 'success', message: 'Appointment cancelled.' });
-    onRefresh();
-    setTimeout(() => setActionFeedback(null), 3000);
+  const handleCancel = async (appointmentId: string) => {
+    try {
+      if (onUpdateStatus) {
+        await onUpdateStatus(appointmentId, 'cancelled');
+      } else {
+        updateAppointmentStatus(appointmentId, 'cancelled');
+      }
+      setActionFeedback({ type: 'success', message: 'Appointment cancelled.' });
+      onRefresh();
+      setTimeout(() => setActionFeedback(null), 3000);
+    } catch {
+      setActionFeedback({ type: 'error', message: 'Unable to cancel appointment.' });
+      setTimeout(() => setActionFeedback(null), 3000);
+    }
   };
 
-  const handleComplete = (appointmentId: string) => {
-    updateAppointmentStatus(appointmentId, 'completed');
-    setActionFeedback({ type: 'success', message: 'Appointment marked as completed.' });
-    onRefresh();
-    setTimeout(() => setActionFeedback(null), 3000);
+  const handleComplete = async (appointmentId: string) => {
+    try {
+      if (onUpdateStatus) {
+        await onUpdateStatus(appointmentId, 'completed');
+      } else {
+        updateAppointmentStatus(appointmentId, 'completed');
+      }
+      setActionFeedback({ type: 'success', message: 'Appointment marked as completed.' });
+      onRefresh();
+      setTimeout(() => setActionFeedback(null), 3000);
+    } catch {
+      setActionFeedback({ type: 'error', message: 'Unable to update appointment.' });
+      setTimeout(() => setActionFeedback(null), 3000);
+    }
   };
 
   return (

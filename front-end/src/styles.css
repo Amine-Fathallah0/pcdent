@@ -1786,10 +1786,11 @@ button,
 
 .sidebar {
     grid-area: sidebar;
-    background: color-mix(in oklab, var(--color-surface) 88%, transparent);
-    border: 1px solid var(--color-card-border);
+    background: color-mix(in oklab, var(--color-surface) 28%, transparent);
+    border: 1px solid color-mix(in oklab, var(--color-card-border) 60%, transparent);
     border-radius: 22px;
-    /* Always collapsed by default */
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     width: var(--sidebar-collapsed-width);
     padding: var(--space-10);
     padding-bottom: 126px;
@@ -1798,22 +1799,22 @@ button,
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 16px 34px rgba(2, 6, 23, 0.08);
-    transition: width 220ms var(--ease-standard),
-                padding 180ms var(--ease-standard),
+    box-shadow: 0 8px 24px rgba(2, 6, 23, 0.04);
+    transition: width 240ms var(--ease-standard),
+                padding 200ms var(--ease-standard),
                 box-shadow 200ms var(--ease-standard),
-                overflow 0ms 220ms;
+                overflow 0ms 240ms;
 }
 
-.sidebar:hover,
-.sidebar:focus-within {
+.sidebar--open {
     width: var(--sidebar-expanded-width);
     padding: var(--space-16);
     padding-bottom: 136px;
     overflow: visible;
-    box-shadow: 0 20px 48px rgba(2, 6, 23, 0.14);
-    transition: width 220ms var(--ease-standard),
-                padding 180ms var(--ease-standard),
+    background: color-mix(in oklab, var(--color-surface) 34%, transparent);
+    box-shadow: 0 16px 40px rgba(2, 6, 23, 0.08);
+    transition: width 240ms var(--ease-standard),
+                padding 200ms var(--ease-standard),
                 box-shadow 200ms var(--ease-standard);
 }
 
@@ -1833,8 +1834,7 @@ button,
     justify-content: center;
 }
 
-.sidebar:hover .sidebar-brand,
-.sidebar:focus-within .sidebar-brand {
+.sidebar--open .sidebar-brand {
     justify-content: flex-start;
 }
 
@@ -1858,6 +1858,9 @@ button,
 
 .sidebar-brand__text {
     min-width: 0;
+    height: 72px;
+    display: flex;
+    align-items: center;
     /* Hidden when collapsed */
     opacity: 0;
     max-width: 0;
@@ -1866,16 +1869,24 @@ button,
     transition: opacity 130ms ease, max-width 170ms ease, transform 170ms ease;
 }
 
-.sidebar:hover .sidebar-brand__text,
-.sidebar:focus-within .sidebar-brand__text {
+.sidebar--open .sidebar-brand__text {
     opacity: 1;
-    max-width: 200px;
+    max-width: 240px;
     transform: translateX(0);
 }
 
 .sidebar-brand__kicker,
 .sidebar-brand__title {
     margin: 0;
+}
+
+.sidebar-brand__logo {
+    height: 128px;
+    width: 440px;
+
+    display: block;
+    object-fit: cover;
+    object-position: left center;
 }
 
 .sidebar-brand__kicker {
@@ -1949,13 +1960,12 @@ button,
 .sidebar-link {
     display: flex;
     align-items: center;
-    gap: var(--space-6);
-    /* Collapsed: icon-only, centered */
-    justify-content: center;
-    width: fit-content;
-    max-width: 100%;
-    padding: 6px 7px;
-    min-height: 33px;
+    gap: var(--space-10);
+    justify-content: flex-start;
+    width: 42px;
+    margin: 0 auto;
+    padding: 10px;
+    min-height: 42px;
     border-radius: var(--radius-md);
     border: 1px solid transparent;
     position: relative;
@@ -1965,7 +1975,7 @@ button,
     box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-primary) 0%, transparent);
     transition: border-color 300ms var(--ease-standard), background-color 240ms var(--ease-standard), color 240ms var(--ease-standard), transform 130ms ease;
     cursor: pointer;
-    font-size: 18px;
+    font-size: var(--font-size-sm);
     line-height: 1.2;
 }
 
@@ -1983,8 +1993,8 @@ button,
 }
 
 .sidebar-link svg {
-    width: 14px;
-    height: 14px;
+    width: 22px;
+    height: 22px;
     flex-shrink: 0;
 }
 
@@ -1999,20 +2009,17 @@ button,
     pointer-events: none;
 }
 
-.sidebar:hover .sidebar-link__label,
-.sidebar:focus-within .sidebar-link__label {
+.sidebar--open .sidebar-link__label {
     opacity: 1;
     max-width: 200px;
     transform: translateX(0);
     pointer-events: auto;
 }
 
-/* Expand link when sidebar is hovered */
-.sidebar:hover .sidebar-link,
-.sidebar:focus-within .sidebar-link {
-    justify-content: flex-start;
+.sidebar--open .sidebar-link {
     width: 100%;
-    padding: 6px 8px;
+    margin: 0;
+    padding: 10px 12px;
 }
 
 .sidebar-link:hover {
@@ -2054,18 +2061,19 @@ button,
     right: var(--space-10);
     bottom: var(--space-16);
     padding-top: var(--space-10);
-    border-top: 1px solid var(--color-card-border);
+    border-top: 1px solid color-mix(in oklab, var(--color-card-border) 60%, transparent);
     overflow: hidden;
-    /* Collapsed: hide the logout button text */
-    max-height: 70px;
-    transition: max-height 180ms var(--ease-standard),
-                left 220ms var(--ease-standard),
-                right 220ms var(--ease-standard);
+    /* Collapsed: only toggle button visible */
+    max-height: 52px;
+    display: flex;
+    flex-direction: column;
+    transition: max-height 200ms var(--ease-standard),
+                left 240ms var(--ease-standard),
+                right 240ms var(--ease-standard);
 }
 
-.sidebar:hover .sidebar-footer,
-.sidebar:focus-within .sidebar-footer {
-    max-height: 110px;
+.sidebar--open .sidebar-footer {
+    max-height: 120px;
     left: var(--space-16);
     right: var(--space-16);
     overflow: visible;
@@ -2080,19 +2088,11 @@ button,
     transition: opacity 130ms ease, max-width 170ms ease, transform 170ms ease;
 }
 
-.sidebar:hover .sidebar-footer .btn,
-.sidebar:focus-within .sidebar-footer .btn {
+.sidebar--open .sidebar-footer .btn {
     opacity: 1;
     max-width: 220px;
     pointer-events: auto;
     transform: translateX(0);
-}
-
-.sidebar-footer-controls {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-top: var(--space-12);
 }
 
 /* Main Content */
@@ -2106,6 +2106,46 @@ button,
     border-radius: 22px;
     display: flex;
     flex-direction: column;
+}
+
+/* Sidebar collapse toggle (lives inside the sidebar footer) */
+
+.sidebar-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--space-10);
+    justify-content: flex-start;
+    width: 42px;
+    margin: 0 auto var(--space-8);
+    padding: 10px;
+    min-height: 42px;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family-base);
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+    margin-bottom: var(--space-8);
+}
+
+.sidebar-toggle-btn:hover {
+    background: var(--color-secondary);
+    color: var(--color-text);
+}
+
+.sidebar--open .sidebar-toggle-btn {
+    width: 100%;
+    margin: 0 0 var(--space-8);
+    padding: 10px 12px;
+}
+
+.topbar-alerts {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
 }
 
 /* Dashboard Top Bar */
@@ -2180,8 +2220,13 @@ button,
     transition: border-color var(--duration-fast) var(--ease-standard);
 }
 
-.dashboard-topbar__profile:hover {
-    border-color: color-mix(in oklab, var(--color-primary) 35%, var(--color-card-border));
+.dashboard-topbar__profile--clickable {
+    cursor: pointer;
+}
+
+.dashboard-topbar__profile--clickable:hover {
+    border-color: color-mix(in oklab, var(--color-primary) 50%, var(--color-card-border));
+    background: color-mix(in oklab, var(--color-primary) 6%, var(--color-surface));
 }
 
 .dashboard-topbar__avatar {
@@ -2478,6 +2523,319 @@ button,
 
 .stat-change.negative {
     color: var(--color-medical-red);
+}
+
+/* Dentist dashboard overview */
+.dashboard-overview-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1.7fr) minmax(320px, 1.6fr);
+    gap: var(--space-20);
+    margin-bottom: var(--space-24);
+    align-items: start;
+}
+
+.dashboard-overview-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+}
+
+.dashboard-count-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    background: var(--color-bg-2);
+    color: var(--color-text);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+}
+
+.dashboard-count-chip--warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: #B45309;
+}
+
+.dashboard-pending-count {
+    font-size: var(--font-size-3xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text);
+}
+
+.dashboard-muted {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.dashboard-patients-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+}
+
+.dashboard-patient-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    padding: var(--space-8) 0;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.dashboard-patient-row:last-child {
+    border-bottom: none;
+}
+
+.dashboard-patient-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: var(--font-weight-bold);
+    font-size: var(--font-size-sm);
+}
+
+.dashboard-patient-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.dashboard-patient-name {
+    font-weight: var(--font-weight-semibold);
+}
+
+.dashboard-patient-meta {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+}
+
+.dashboard-patient-date {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+}
+
+.dashboard-empty {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+}
+
+.dashboard-inbox-indicators {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--space-12);
+}
+
+.dashboard-inbox-indicator {
+    border: 1px solid var(--color-card-border);
+    background: var(--color-bg-1);
+    border-radius: var(--radius-md);
+    padding: var(--space-12);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text);
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.dashboard-inbox-indicator:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+.dashboard-inbox-indicator__label {
+    font-size: var(--font-size-sm);
+}
+
+.dashboard-inbox-indicator__count {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    background: rgba(255, 255, 255, 0.6);
+}
+
+.dashboard-inbox-indicator.is-active {
+    color: #fff;
+}
+
+.dashboard-inbox-indicator.is-active .dashboard-inbox-indicator__count {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+
+.dashboard-inbox-indicator[data-variant="new"] {
+    border-color: rgba(37, 99, 235, 0.4);
+}
+
+.dashboard-inbox-indicator[data-variant="new"].is-active {
+    background: #2563EB;
+    border-color: #2563EB;
+}
+
+.dashboard-inbox-indicator[data-variant="review"] {
+    border-color: rgba(245, 158, 11, 0.5);
+}
+
+.dashboard-inbox-indicator[data-variant="review"].is-active {
+    background: #F59E0B;
+    border-color: #F59E0B;
+    color: #1F2937;
+}
+
+.dashboard-inbox-indicator[data-variant="review"].is-active .dashboard-inbox-indicator__count {
+    color: #1F2937;
+}
+
+.dashboard-inbox-indicator[data-variant="final"] {
+    border-color: rgba(16, 185, 129, 0.4);
+}
+
+.dashboard-inbox-indicator[data-variant="final"].is-active {
+    background: #10B981;
+    border-color: #10B981;
+}
+
+.dashboard-inbox-hint {
+    margin: 0;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+}
+
+.dashboard-inbox-details {
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: max-height 0.35s ease, opacity 0.25s ease, transform 0.35s ease;
+    pointer-events: none;
+}
+
+.dashboard-inbox-details.is-open {
+    max-height: 2000px;
+    opacity: 1;
+    transform: translateY(0);
+    margin-bottom: var(--space-24);
+    padding-top: var(--space-12);
+    pointer-events: auto;
+}
+
+.dashboard-inbox-details-meta {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    margin-top: 4px;
+}
+
+.dentist-home-top-row {
+    display: grid;
+    grid-template-columns: minmax(0, 480px) minmax(0, 420px);
+    gap: var(--space-20);
+    margin-bottom: var(--space-24);
+    align-items: start;
+}
+
+.dentist-main-card,
+.dentist-summary-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-10);
+    align-self: start;
+    height: auto;
+}
+
+.dentist-main-card {
+    width: 100%;
+    padding: var(--space-20);
+    padding-top: var(--space-24);
+}
+
+.dentist-main-card .card-header {
+    margin-bottom: var(--space-12);
+}
+
+.dentist-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-10);
+}
+
+.dentist-actions-grid .btn {
+    padding: var(--space-10) var(--space-12);
+}
+
+.dentist-summary-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+}
+
+.dentist-summary-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-8) var(--space-10);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-1);
+}
+
+.dentist-summary-item:nth-child(1) {
+    background: linear-gradient(270deg, rgba(8, 126, 139, 0.28) 0%, rgba(8, 126, 139, 0.0) 70%), var(--color-bg-1);
+}
+
+.dentist-summary-item:nth-child(2) {
+    background: linear-gradient(270deg, rgba(255, 90, 95, 0.25) 0%, rgba(255, 90, 95, 0.0) 70%), var(--color-bg-1);
+}
+
+.dentist-summary-item:nth-child(3) {
+    background: linear-gradient(270deg, rgba(60, 60, 60, 0.28) 0%, rgba(60, 60, 60, 0.0) 70%), var(--color-bg-1);
+}
+
+.dentist-summary-item:nth-child(4) {
+    background: linear-gradient(270deg, rgba(245, 245, 245, 0.28) 0%, rgba(245, 245, 245, 0.0) 70%), var(--color-bg-1);
+}
+
+.dentist-summary-item__label {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+.dentist-summary-item__value {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text);
+}
+
+.dentist-dashboard-lower-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-20);
+    margin-bottom: var(--space-24);
+}
+
+@media (max-width: 1200px) {
+    .dentist-home-top-row,
+    .dashboard-overview-row,
+    .dentist-dashboard-lower-row {
+        grid-template-columns: 1fr;
+    }
+
+    .dentist-actions-grid,
+    .dashboard-inbox-indicators {
+        grid-template-columns: 1fr;
+    }
 }
 
 

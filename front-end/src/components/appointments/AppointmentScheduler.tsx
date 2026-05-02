@@ -1,19 +1,25 @@
-import { useState, type JSX } from 'react';
+import { useState, useEffect, useRef, type JSX } from 'react';
 import {
-  database,
-  addAppointment,
   formatTime,
   formatDate,
   getDayName,
-  getAppointmentTypeLabel,
   type Appointment
 } from '../../data/database';
+import { fetchAppointmentTypeSuggestions } from '../../lib/backendApi';
 
 interface AppointmentSchedulerProps {
   userId: string;
   userRole: 'patient' | 'dentist';
   dentistId?: string;
   patientId?: string;
+  dentistPatients?: Array<{ id: string; name: string; email: string }>;
+  onCreateAppointment?: (payload: {
+    dentistPatientLinkId: number;
+    appointmentDate: string;
+    appointmentType: string;
+    duration: number;
+    notes: string | null;
+  }) => Promise<Appointment>;
   onClose: () => void;
   onSuccess: (appointment: Appointment) => void;
 }
@@ -78,8 +84,6 @@ const icons: Record<string, JSX.Element> = {
   )
 };
 
-const appointmentTypes: Appointment['type'][] = ['checkup', 'cleaning', 'treatment', 'consultation', 'follow-up', 'emergency'];
-
 const timeSlots = [
   '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
   '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30'
@@ -92,21 +96,31 @@ const durations = [
   { value: 90, label: '1.5 hours' }
 ];
 
-const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose, onSuccess }: AppointmentSchedulerProps) => {
+const AppointmentScheduler = ({ userId: _userId, userRole, dentistPatients = [], onCreateAppointment, onClose, onSuccess }: AppointmentSchedulerProps) => {
   const [step, setStep] = useState(1);
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedTime, setSelectedTime] = useState<string>('');
-  const [selectedType, setSelectedType] = useState<Appointment['type']>('checkup');
+  const [appointmentType, setAppointmentType] = useState('');
   const [selectedDuration, setSelectedDuration] = useState(30);
   const [notes, setNotes] = useState('');
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const typeInputRef = useRef<HTMLInputElement>(null);
 
-  // Get patients for dentist view
-  const patients = database.patients;
-  const [selectedPatient, setSelectedPatient] = useState(patientId || '');
+  const [selectedPatient, setSelectedPatient] = useState('');
 
-  // Generate calendar days
+  useEffect(() => {
+    fetchAppointmentTypeSuggestions()
+      .then(setSuggestions)
+      .catch(() => setSuggestions([]));
+  }, []);
+
+  const filteredSuggestions = suggestions.filter(s =>
+    s.toLowerCase().includes(appointmentType.toLowerCase()) && s !== appointmentType
+  );
+
   const generateCalendarDays = () => {
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth();
@@ -115,16 +129,12 @@ const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose,
     const startPadding = firstDay.getDay();
     const days: (Date | null)[] = [];
 
-    // Add padding for days before the first
     for (let i = 0; i < startPadding; i++) {
       days.push(null);
     }
-
-    // Add all days of the month
     for (let i = 1; i <= lastDay.getDate(); i++) {
       days.push(new Date(year, month, i));
     }
-
     return days;
   };
 
@@ -132,7 +142,6 @@ const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose,
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const day = date.getDay();
-    // Disable past dates and weekends
     return date < today || day === 0 || day === 6;
   };
 
@@ -142,34 +151,29 @@ const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose,
     }
   };
 
-  const handleSubmit = () => {
-    if (!selectedDate || !selectedTime || (userRole === 'dentist' && !selectedPatient)) {
-      return;
-    }
+  const handleSubmit = async () => {
+    if (!selectedDate || !selectedTime || (userRole === 'dentist' && !selectedPatient)) return;
 
     setIsSubmitting(true);
 
-    const patient = database.patients.find(p => p.id === (userRole === 'patient' ? userId : selectedPatient));
-    const dentist = database.dentistProfile;
+    if (onCreateAppointment && userRole === 'dentist') {
+      try {
+        const created = await onCreateAppointment({
+          dentistPatientLinkId: Number(selectedPatient),
+          appointmentDate: `${selectedDate}T${selectedTime}:00`,
+          appointmentType: appointmentType.trim(),
+          duration: selectedDuration,
+          notes: notes || null,
+        });
+        setIsSubmitting(false);
+        onSuccess(created);
+      } catch {
+        setIsSubmitting(false);
+      }
+      return;
+    }
 
-    const newAppointment = addAppointment({
-      patientId: userRole === 'patient' ? userId : selectedPatient,
-      patientName: patient?.name || 'Unknown Patient',
-      patientEmail: patient?.email || '',
-      dentistId: dentistId || 'dentist-001',
-      dentistName: dentist?.name || 'Unknown Dentist',
-      date: selectedDate,
-      time: selectedTime,
-      duration: selectedDuration,
-      type: selectedType,
-      status: 'scheduled',
-      notes: notes || null
-    });
-
-    setTimeout(() => {
-      setIsSubmitting(false);
-      onSuccess(newAppointment);
-    }, 500);
+    setIsSubmitting(false);
   };
 
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -207,7 +211,7 @@ const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose,
             </div>
           </div>
 
-          {/* Step 1: Date Selection */}
+          {/* Step 1: Date + Patient */}
           {step === 1 && (
             <div className="scheduler-section">
               {userRole === 'dentist' && (
@@ -222,7 +226,7 @@ const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose,
                     onChange={(e) => setSelectedPatient(e.target.value)}
                   >
                     <option value="">Choose a patient...</option>
-                    {patients.map(patient => (
+                    {dentistPatients.map(patient => (
                       <option key={patient.id} value={patient.id}>{patient.name}</option>
                     ))}
                   </select>
@@ -273,7 +277,7 @@ const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose,
             </div>
           )}
 
-          {/* Step 2: Time Selection */}
+          {/* Step 2: Time */}
           {step === 2 && (
             <div className="scheduler-section">
               <div className="selected-date-display" style={{ marginBottom: '24px' }}>
@@ -305,7 +309,7 @@ const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose,
             </div>
           )}
 
-          {/* Step 3: Appointment Details */}
+          {/* Step 3: Details */}
           {step === 3 && (
             <div className="scheduler-section">
               <div className="appointment-summary">
@@ -319,24 +323,68 @@ const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose,
                 </div>
               </div>
 
-              <div className="form-group">
+              {/* Appointment Type — free text with suggestions */}
+              <div className="form-group" style={{ position: 'relative' }}>
                 <label className="form-label">
                   {icons.stethoscope}
                   <span style={{ marginLeft: '8px' }}>Appointment Type</span>
                 </label>
-                <div className="type-options">
-                  {appointmentTypes.map(type => (
-                    <button
-                      key={type}
-                      className={`type-option ${selectedType === type ? 'selected' : ''}`}
-                      onClick={() => setSelectedType(type)}
-                    >
-                      {getAppointmentTypeLabel(type)}
-                    </button>
-                  ))}
-                </div>
+                <input
+                  ref={typeInputRef}
+                  className="form-input"
+                  type="text"
+                  value={appointmentType}
+                  onChange={(e) => {
+                    setAppointmentType(e.target.value);
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  placeholder="e.g. Checkup, Cleaning, Root Canal..."
+                />
+                {showSuggestions && filteredSuggestions.length > 0 && (
+                  <ul style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    background: 'var(--color-surface, #fff)',
+                    border: '1px solid var(--color-border, #e5e7eb)',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                    zIndex: 100,
+                    margin: 0,
+                    padding: '4px 0',
+                    listStyle: 'none',
+                  }}>
+                    {filteredSuggestions.map(s => (
+                      <li
+                        key={s}
+                        onMouseDown={() => {
+                          setAppointmentType(s);
+                          setShowSuggestions(false);
+                        }}
+                        style={{
+                          padding: '8px 16px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-bg-hover, #f3f4f6)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p style={{ fontSize: '12px', color: 'var(--color-text-muted, #6b7280)', marginTop: '4px' }}>
+                  {suggestions.length > 0
+                    ? 'Start typing — your common types appear as suggestions.'
+                    : 'Type any label. Suggestions appear after you use a type 3+ times.'}
+                </p>
               </div>
 
+              {/* Duration */}
               <div className="form-group">
                 <label className="form-label">
                   {icons.clock}
@@ -355,6 +403,7 @@ const AppointmentScheduler = ({ userId, userRole, dentistId, patientId, onClose,
                 </div>
               </div>
 
+              {/* Notes */}
               <div className="form-group">
                 <label className="form-label">
                   {icons.notes}
