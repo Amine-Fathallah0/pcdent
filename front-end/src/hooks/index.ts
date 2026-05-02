@@ -5,3 +5,5 @@ export { useAsync } from './useAsync';
 export { useToggle, usePrevious, useMediaQuery, useKeyPress } from './useUtils';
 export { useForm } from './useForm';
 export { useAuthenticatedFileUrl } from './useAuthenticatedFileUrl';
+export { useChatSocket } from './useChatSocket';
+export type { ChatSocketEvent } from './useChatSocket';

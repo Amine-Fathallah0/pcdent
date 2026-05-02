@@ -204,3 +204,56 @@ class AIProcessingJob(models.Model):
     def __str__(self):
         return f"Job {self.job_id} - {self.status}"
 
+
+class Conversation(models.Model):
+    dentist_patient_link = models.OneToOneField(
+        DentistPatientLink,
+        on_delete=models.CASCADE,
+        related_name='conversation',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_message_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-last_message_at', '-created_at']
+
+    @property
+    def dentist(self):
+        return self.dentist_patient_link.dentist
+
+    @property
+    def patient(self):
+        return self.dentist_patient_link.patient
+
+    def __str__(self):
+        return f"Conversation: {self.dentist_patient_link}"
+
+
+class Message(models.Model):
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name='messages',
+    )
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sent_messages',
+    )
+    content = models.TextField()
+    is_system = models.BooleanField(default=False)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['conversation', 'created_at']),
+            models.Index(fields=['conversation', 'is_read']),
+        ]
+
+    def __str__(self):
+        sender_name = 'system' if self.is_system else (self.sender.full_name if self.sender else 'unknown')
+        return f"{sender_name}: {self.content[:50]}"

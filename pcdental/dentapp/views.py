@@ -19,15 +19,22 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from .models import AIProcessingJob, Appointment, CTScan, Dentist, DentistPatientLink, Patient
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+from django.db.models import Q
+
+from .consumers import user_group_name
+from .models import AIProcessingJob, Appointment, Conversation, CTScan, Dentist, DentistPatientLink, Message, Patient
 from .serializers import (
     ActivePatientSerializer,
     AIProcessingJobSerializer,
     AppointmentSerializer,
+    ConversationSerializer,
     CTScanSerializer,
     DentistPatientLinkSerializer,
     DentistRegistrationSerializer,
     JobReviewDecisionSerializer,
+    MessageSerializer,
     PatientRegistrationSerializer,
     PendingLinkSerializer,
     UserSerializer,
@@ -585,6 +592,122 @@ class DentistPatientLinkRequestView(APIView):
             is_active=False,
         )
         return Response(DentistPatientLinkSerializer(link).data, status=status.HTTP_201_CREATED)
+
+
+def _conversations_for(user):
+    """All conversations the given user participates in (active links only)."""
+    return (
+        Conversation.objects
+        .filter(dentist_patient_link__is_active=True)
+        .filter(
+            Q(dentist_patient_link__dentist__dentist=user)
+            | Q(dentist_patient_link__patient__patient=user)
+        )
+        .select_related(
+            'dentist_patient_link__dentist__dentist',
+            'dentist_patient_link__patient__patient',
+        )
+    )
+
+
+def _conversation_participants(conversation):
+    return (
+        conversation.dentist_patient_link.dentist.dentist,
+        conversation.dentist_patient_link.patient.patient,
+    )
+
+
+def _broadcast(group_name, payload):
+    layer = get_channel_layer()
+    if layer is None:
+        return
+    async_to_sync(layer.group_send)(group_name, payload)
+
+
+class ConversationListView(generics.ListAPIView):
+    serializer_class = ConversationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return _conversations_for(self.request.user).order_by('-last_message_at', '-created_at')
+
+
+def _mark_conversation_read(conversation, reader):
+    """Mark every message NOT sent by ``reader`` as read and notify the sender."""
+    updated = (
+        conversation.messages
+        .filter(is_read=False)
+        .exclude(sender=reader)
+        .update(is_read=True)
+    )
+    if not updated:
+        return 0
+    dentist_user, patient_user = _conversation_participants(conversation)
+    other = patient_user if reader.pk == dentist_user.pk else dentist_user
+    _broadcast(user_group_name(other.user_id), {
+        'type': 'chat.read',
+        'conversation_id': conversation.id,
+        'reader_id': str(reader.user_id),
+    })
+    return updated
+
+
+class ConversationMessagesView(APIView):
+    """GET — load the last 100 messages and mark unseen ones as read.
+    POST — send a new message and broadcast it to both participants.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_conversation(self, request, pk):
+        conv = generics.get_object_or_404(_conversations_for(request.user), pk=pk)
+        return conv
+
+    def get(self, request, pk):
+        conv = self._get_conversation(request, pk)
+        messages_qs = conv.messages.order_by('-created_at')[:100]
+        messages = list(reversed(messages_qs))
+        _mark_conversation_read(conv, request.user)
+        data = MessageSerializer(messages, many=True).data
+        return Response(data)
+
+    def post(self, request, pk):
+        conv = self._get_conversation(request, pk)
+        content = (request.data.get('content') or '').strip()
+        if not content:
+            return Response({'detail': 'Message content cannot be empty.'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(content) > 5000:
+            return Response({'detail': 'Message is too long.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        message = Message.objects.create(
+            conversation=conv,
+            sender=request.user,
+            content=content,
+            is_read=False,
+        )
+        conv.last_message_at = message.created_at
+        conv.save(update_fields=['last_message_at'])
+
+        payload = MessageSerializer(message).data
+
+        dentist_user, patient_user = _conversation_participants(conv)
+        for participant in (dentist_user, patient_user):
+            _broadcast(user_group_name(participant.user_id), {
+                'type': 'chat.message',
+                'conversation_id': conv.id,
+                'message': payload,
+            })
+
+        return Response(payload, status=status.HTTP_201_CREATED)
+
+
+class ConversationReadView(APIView):
+    """Mark all messages from the other party as read. Idempotent."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        conv = generics.get_object_or_404(_conversations_for(request.user), pk=pk)
+        _mark_conversation_read(conv, request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(['GET'])

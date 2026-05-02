@@ -30,6 +30,9 @@ urlpatterns = [
     path('jobs/<uuid:job_id>/', views.AIProcessingJobDetailView.as_view(), name='job-detail'),
     path('jobs/<uuid:job_id>/generate-draft/', views.AIProcessingJobGenerateDraftView.as_view(), name='job-generate-draft'),
     path('jobs/<uuid:job_id>/review/', views.AIProcessingJobReviewView.as_view(), name='job-review'),
+    path('conversations/', views.ConversationListView.as_view(), name='conversations'),
+    path('conversations/<int:pk>/messages/', views.ConversationMessagesView.as_view(), name='conversation-messages'),
+    path('conversations/<int:pk>/read/', views.ConversationReadView.as_view(), name='conversation-read'),
 ]
 
 if apps.is_installed('mcp_server'):

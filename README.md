@@ -13,7 +13,7 @@ A full-stack MVP for managing dental clinic workflows: patient-dentist relations
 | Database | PostgreSQL (via psycopg3) |
 | Frontend | React + TypeScript + Vite |
 | CORS | django-cors-headers |
-| Realtime (planned) | Django Channels + WebSockets |
+| Realtime chat | Django Channels + WebSockets (Daphne ASGI server, Redis channel layer) |
 
 
 
@@ -65,6 +65,8 @@ Pcd-project/
 | `Appointment` | Linked to a `DentistPatientLink`. Soft-delete via `deleted_at`. |
 | `CTScan` | Medical file upload (`.dcm`, `.nii`, `.nrrd`) linked to a `DentistPatientLink`. Soft-delete. |
 | `AIProcessingJob` | Tracks the AI report pipeline for a CT scan. Currently runs in fallback/stub mode. |
+| `Conversation` | One-to-one with `DentistPatientLink`. Auto-created via signal when a link becomes active. |
+| `Message` | Belongs to a `Conversation`. Has `is_system` flag (welcome / status notices) and `is_read` flag. |
 
 ---
 
@@ -114,6 +116,28 @@ All endpoints are prefixed at the backend root (default: `http://localhost:8000`
 | `POST` | `/jobs/<job_id>/generate-draft/` | Required | Trigger draft report generation (fallback mode) |
 | `POST` | `/jobs/<job_id>/review/` | Dentist only | Submit review decision (`reviewed` or `finalized`) |
 
+### Messaging (REST)
+
+| Method | URL | Auth | Description |
+|---|---|---|---|
+| `GET` | `/conversations/` | Required | List the current user's conversations with last message + unread count |
+| `GET` | `/conversations/<id>/messages/` | Required | Fetch the last 100 messages in a conversation. Marks unread messages from the other party as read. |
+| `POST` | `/conversations/<id>/messages/` | Required | Send a message. Broadcasts via WebSocket to both participants. Body: `{ "content": "..." }` |
+| `POST` | `/conversations/<id>/read/` | Required | Mark all messages from the other party as read. Used when a message arrives in an already-open conversation. |
+
+### Messaging (WebSocket)
+
+| URL | Auth | Description |
+|---|---|---|
+| `ws://localhost:8000/ws/chat/?token=<JWT_ACCESS>` | JWT in query string | Single global connection per user. Push-only (sending happens via the REST endpoint). |
+
+Server-pushed event payloads:
+
+```json
+{ "type": "message.new", "conversation_id": 12, "message": { ... MessageDto ... } }
+{ "type": "conversation.read", "conversation_id": 12, "reader_id": "<uuid>" }
+```
+
 ---
 
 ## Auth Flow
@@ -151,6 +175,32 @@ The AI pipeline is currently in **fallback mode** — `generate-draft` returns a
 
 ---
 
+## Real-time Messaging
+
+Dentist ↔ patient chat backed by Django Channels with a Redis channel layer. Persisted in PostgreSQL, pushed in real-time via a single global WebSocket per session.
+
+**Design choices**
+
+- One `Conversation` per `DentistPatientLink`, auto-created by a `post_save` signal when the link becomes active. A system welcome message is inserted as the first message (`is_system=True`).
+- Existing approved links are backfilled by migration `0015_backfill_conversations`.
+- One WebSocket connection per logged-in user — joined to a personal channel group (`user_<uuid>`). All conversations stream over that single connection so unread badges update even from other pages.
+- WebSockets are **push-only**. Sending a message goes through the REST endpoint so validation, throttling, and permission checks stay in one place.
+- JWT auth on the WebSocket: token is read from `?token=<access_token>` (browsers cannot send `Authorization` headers on WS handshakes). See [`dentapp/ws_auth.py`](pcdental/dentapp/ws_auth.py).
+- Read tracking: opening a conversation, or receiving a message while it's already open, calls `POST /conversations/<id>/read/` which marks DB rows read and broadcasts `conversation.read` to the sender so their bubble flips to "read".
+
+**Key files**
+
+| File | Purpose |
+|---|---|
+| [`dentapp/consumers.py`](pcdental/dentapp/consumers.py) | `ChatConsumer` — joins per-user channel group on connect |
+| [`dentapp/routing.py`](pcdental/dentapp/routing.py) | WebSocket URL patterns |
+| [`dentapp/ws_auth.py`](pcdental/dentapp/ws_auth.py) | JWT middleware for WebSocket handshake |
+| [`dentapp/signals.py`](pcdental/dentapp/signals.py) | Auto-creates `Conversation` + welcome message on link activation |
+| [`mysite/asgi.py`](pcdental/mysite/asgi.py) | `ProtocolTypeRouter` splitting HTTP / WebSocket traffic |
+| [`front-end/src/hooks/useChatSocket.ts`](front-end/src/hooks/useChatSocket.ts) | Global WebSocket hook with exponential reconnect |
+
+---
+
 ## Local Development Setup
 
 ### Prerequisites
@@ -158,6 +208,7 @@ The AI pipeline is currently in **fallback mode** — `generate-draft` returns a
 - Python 3.11+
 - PostgreSQL (running locally)
 - Node.js 18+ (for frontend)
+- Docker (for the Redis channel layer used by chat)
 
 ### Backend
 
@@ -184,11 +235,18 @@ python manage.py migrate
 # 6. Create a superuser (optional, for /admin/)
 python manage.py createsuperuser
 
-# 7. Start the backend
-python manage.py runserver
+# 7. Start Redis (required for real-time chat; one-time setup, auto-starts after)
+docker run -d -p 6379:6379 --name redis-chat --restart always redis:alpine
+
+# 8. Start the backend with Daphne (ASGI — required for WebSockets)
+python -m daphne -b 0.0.0.0 -p 8000 mysite.asgi:application
 ```
 
-Backend runs at `http://localhost:8000`.
+Backend runs at `http://localhost:8000` (HTTP) and `ws://localhost:8000/ws/chat/` (WebSocket).
+
+> ⚠️ **Do not use `python manage.py runserver`** if you want chat to work. The dev server speaks WSGI only and cannot serve WebSocket connections — Daphne is required. HTTP endpoints work the same way under either server.
+
+> **Redis** runs as a background Docker container with `--restart always`, so it auto-starts whenever Docker Desktop is running. Verify with `docker ps | grep redis-chat`.
 
 ### Frontend
 
@@ -216,6 +274,8 @@ Key variables:
 | `JWT_ACCESS_MINUTES` | Access token lifetime (default: 5 min). |
 | `JWT_REFRESH_DAYS` | Refresh token lifetime (default: 1 day). |
 | `SECURE_SSL_REDIRECT` | Set to `true` in production behind HTTPS. |
+| `REDIS_HOST` | Redis host for the Channels layer (default: `127.0.0.1`). |
+| `REDIS_PORT` | Redis port (default: `6379`). |
 
 ---
 

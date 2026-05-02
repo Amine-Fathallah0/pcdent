@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
-from .models import AIProcessingJob, Appointment, CTScan, Dentist, DentistPatientLink, Patient, User
+from .models import AIProcessingJob, Appointment, Conversation, CTScan, Dentist, DentistPatientLink, Message, Patient, User
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -160,6 +160,86 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
             "updated_at",
             "completed_at",
         ]
+
+
+class MessageSerializer(serializers.ModelSerializer):
+    sender_id = serializers.SerializerMethodField()
+    sender_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Message
+        fields = ['id', 'conversation', 'sender_id', 'sender_name', 'content', 'is_system', 'is_read', 'created_at']
+        read_only_fields = fields
+
+    def get_sender_id(self, obj):
+        return str(obj.sender.user_id) if obj.sender else None
+
+    def get_sender_name(self, obj):
+        if obj.is_system:
+            return 'System'
+        return obj.sender.full_name if obj.sender else 'Unknown'
+
+
+class ConversationSerializer(serializers.ModelSerializer):
+    other_user_id = serializers.SerializerMethodField()
+    other_user_name = serializers.SerializerMethodField()
+    other_user_role = serializers.SerializerMethodField()
+    last_message = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Conversation
+        fields = [
+            'id',
+            'dentist_patient_link',
+            'other_user_id',
+            'other_user_name',
+            'other_user_role',
+            'last_message',
+            'last_message_at',
+            'unread_count',
+            'created_at',
+        ]
+        read_only_fields = fields
+
+    def _viewer(self):
+        request = self.context.get('request')
+        return request.user if request else None
+
+    def get_other_user_id(self, obj):
+        viewer = self._viewer()
+        if viewer is None:
+            return None
+        dentist_user = obj.dentist_patient_link.dentist.dentist
+        patient_user = obj.dentist_patient_link.patient.patient
+        other = patient_user if viewer.pk == dentist_user.pk else dentist_user
+        return str(other.user_id)
+
+    def get_other_user_name(self, obj):
+        viewer = self._viewer()
+        if viewer is None:
+            return ''
+        dentist_user = obj.dentist_patient_link.dentist.dentist
+        patient_user = obj.dentist_patient_link.patient.patient
+        other = patient_user if viewer.pk == dentist_user.pk else dentist_user
+        return other.full_name
+
+    def get_other_user_role(self, obj):
+        viewer = self._viewer()
+        if viewer is None:
+            return ''
+        dentist_user = obj.dentist_patient_link.dentist.dentist
+        return 'patient' if viewer.pk == dentist_user.pk else 'dentist'
+
+    def get_last_message(self, obj):
+        last = obj.messages.order_by('-created_at').first()
+        return last.content if last else ''
+
+    def get_unread_count(self, obj):
+        viewer = self._viewer()
+        if viewer is None:
+            return 0
+        return obj.messages.filter(is_read=False).exclude(sender=viewer).count()
 
 
 class JobReviewDecisionSerializer(serializers.Serializer):
