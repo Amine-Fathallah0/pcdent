@@ -187,6 +187,9 @@ class AIProcessingJob(models.Model):
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='queued')
     is_fallback_mode = models.BooleanField(default=True)
     annotated_image_url = models.URLField(blank=True)
+    annotated_image = models.ImageField(upload_to='ai_outputs/%Y/%m/%d/', null=True, blank=True)
+    mask_image = models.ImageField(upload_to='ai_outputs/%Y/%m/%d/', null=True, blank=True)
+    mask_label_map = models.JSONField(null=True, blank=True)
     draft_report = models.TextField(blank=True)
     dentist_notes = models.TextField(blank=True)
     error_message = models.TextField(blank=True)
@@ -204,3 +207,62 @@ class AIProcessingJob(models.Model):
     def __str__(self):
         return f"Job {self.job_id} - {self.status}"
 
+
+class DentalReport(models.Model):
+    STATUS_CHOICES = [
+        ('auto_generated', 'Auto Generated'),
+        ('pending_review', 'Pending Review'),
+        ('edited', 'Edited'),
+        ('confirmed', 'Confirmed'),
+        ('deleted', 'Deleted'),
+        ('error', 'Error'),
+    ]
+
+    ct_scan = models.ForeignKey(CTScan, on_delete=models.CASCADE, related_name='dental_reports')
+    patient = models.ForeignKey(
+        Patient, on_delete=models.SET_NULL, null=True, blank=True, related_name='dental_reports'
+    )
+    dentist = models.ForeignKey(
+        Dentist, on_delete=models.SET_NULL, null=True, blank=True, related_name='dental_reports'
+    )
+    raw_detections = models.JSONField(default=list)
+    report_text = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='auto_generated')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    edited_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='edited_reports'
+    )
+    edit_count = models.IntegerField(default=0)
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['ct_scan'],
+                condition=models.Q(deleted_at__isnull=True),
+                name='unique_active_report_per_scan',
+            )
+        ]
+        indexes = [
+            models.Index(fields=['ct_scan', '-created_at']),
+            models.Index(fields=['status', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"DentalReport {self.pk} [{self.status}] — scan {self.ct_scan_id}"
+
+
+class AnnotatedScan(models.Model):
+    ct_scan = models.ForeignKey(CTScan, on_delete=models.CASCADE, related_name='annotated_scans')
+    image_overlay = models.ImageField(upload_to='annotated_scans/%Y/%m/%d/')
+    image_format = models.CharField(max_length=10, default='png')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"AnnotatedScan {self.pk} — scan {self.ct_scan_id}"

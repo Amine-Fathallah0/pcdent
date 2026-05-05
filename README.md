@@ -157,6 +157,7 @@ The AI pipeline is currently in **fallback mode** — `generate-draft` returns a
 
 - Python 3.11+
 - PostgreSQL (running locally)
+- Redis (for Celery broker/result backend)
 - Node.js 18+ (for frontend)
 
 ### Backend
@@ -186,6 +187,10 @@ python manage.py createsuperuser
 
 # 7. Start the backend
 python manage.py runserver
+
+# 8. Start the Celery worker (required for CT scan processing)
+# Windows uses a solo pool by default in settings.py to avoid WinError 5.
+celery -A mysite worker --loglevel=info
 ```
 
 Backend runs at `http://localhost:8000`.

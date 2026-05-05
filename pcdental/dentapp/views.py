@@ -19,12 +19,15 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from .models import AIProcessingJob, Appointment, CTScan, Dentist, DentistPatientLink, Patient
+from .models import AIProcessingJob, AnnotatedScan, Appointment, CTScan, Dentist, DentalReport, DentistPatientLink, Patient
+from .tasks import analyze_ct_scan_and_generate_report
 from .serializers import (
     ActivePatientSerializer,
     AIProcessingJobSerializer,
+    AnnotatedScanSerializer,
     AppointmentSerializer,
     CTScanSerializer,
+    DentalReportSerializer,
     DentistPatientLinkSerializer,
     DentistRegistrationSerializer,
     JobReviewDecisionSerializer,
@@ -66,6 +69,27 @@ def _get_role_profiles(request):
             Patient.objects.filter(patient=user, deleted_at__isnull=True).first(),
         )
     return request._role_profiles
+
+
+def _get_authorized_job(request, job_id):
+    job = generics.get_object_or_404(
+        AIProcessingJob.objects.select_related(
+            'ct_scan',
+            'ct_scan__dentist_patient_link',
+            'ct_scan__dentist_patient_link__patient',
+            'ct_scan__dentist_patient_link__patient__patient',
+        ),
+        job_id=job_id,
+    )
+    link = job.ct_scan.dentist_patient_link
+    dentist_profile, patient_profile = _get_role_profiles(request)
+    is_authorized = (
+        (dentist_profile and link.dentist_id == dentist_profile.pk)
+        or (patient_profile and link.patient_id == patient_profile.pk)
+    )
+    if not is_authorized:
+        raise PermissionDenied('You do not have access to this job.')
+    return job
 
 
 class DentistTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -443,30 +467,82 @@ class AIProcessingJobDetailView(generics.RetrieveAPIView):
 
 
 class AIProcessingJobGenerateDraftView(APIView):
+    """Re-trigger unified analysis (YOLO + report) for a failed or pending job.
+
+    Blocked if an active (non-error) report already exists — use the
+    dental-report edit/confirm endpoints instead.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, job_id):
-        job = generics.get_object_or_404(
-            AIProcessingJob.objects.select_related('ct_scan', 'ct_scan__dentist_patient_link', 'ct_scan__dentist_patient_link__patient', 'ct_scan__dentist_patient_link__patient__patient'),
-            job_id=job_id,
-        )
-        dentist_profile, patient_profile = _get_role_profiles(request)
-        link = job.ct_scan.dentist_patient_link
-        if dentist_profile and link.dentist_id != dentist_profile.pk:
-            raise PermissionDenied('You cannot request a draft for this job.')
-        if patient_profile and link.patient_id != patient_profile.pk:
-            raise PermissionDenied('You cannot request a draft for this job.')
-        if not dentist_profile and not patient_profile:
-            raise PermissionDenied('Unauthorized.')
+        job = _get_authorized_job(request, job_id)
+        ct_scan = job.ct_scan
 
-        job.status = 'draft_ready'
-        job.draft_report = (
-            'Draft report generated in fallback mode. Segmentation service is not connected yet. '
-            'Dentist review is required before finalization.'
-        )
-        job.save(update_fields=['draft_report', 'status', 'updated_at'])
+        active_report = DentalReport.objects.filter(
+            ct_scan=ct_scan,
+            deleted_at__isnull=True,
+        ).exclude(status='error').first()
+        if active_report:
+            return Response(
+                {'detail': 'An active report already exists. Edit or confirm it instead.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        return Response(AIProcessingJobSerializer(job, context={'request': request}).data, status=status.HTTP_200_OK)
+        # Soft-delete any lingering error reports so the task can create a fresh one.
+        DentalReport.objects.filter(
+            ct_scan=ct_scan,
+            status='error',
+            deleted_at__isnull=True,
+        ).update(deleted_at=timezone.now(), status='deleted')
+
+        job.status = 'queued'
+        job.draft_report = ''
+        job.error_message = ''
+        job.save(update_fields=['status', 'draft_report', 'error_message', 'updated_at'])
+
+        analyze_ct_scan_and_generate_report.delay(ct_scan.pk)
+
+        return Response(AIProcessingJobSerializer(job, context={'request': request}).data, status=status.HTTP_202_ACCEPTED)
+
+
+class AIProcessingJobAnnotatedImageView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, job_id):
+        job = _get_authorized_job(request, job_id)
+        if not job.annotated_image:
+            raise Http404('Annotated image is missing.')
+
+        try:
+            file_handle = job.annotated_image.open('rb')
+        except FileNotFoundError as exc:
+            raise Http404('Annotated image is missing on disk.') from exc
+
+        filename = os.path.basename(job.annotated_image.name)
+        response = FileResponse(file_handle, as_attachment=False, content_type='image/png')
+        response['Content-Disposition'] = f'inline; filename="{smart_str(filename)}"'
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
+
+class AIProcessingJobMaskImageView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, job_id):
+        job = _get_authorized_job(request, job_id)
+        if not job.mask_image:
+            raise Http404('Mask image is missing.')
+
+        try:
+            file_handle = job.mask_image.open('rb')
+        except FileNotFoundError as exc:
+            raise Http404('Mask image is missing on disk.') from exc
+
+        filename = os.path.basename(job.mask_image.name)
+        response = FileResponse(file_handle, as_attachment=False, content_type='image/png')
+        response['Content-Disposition'] = f'inline; filename="{smart_str(filename)}"'
+        response['Cache-Control'] = 'private, no-store'
+        return response
 
 
 class AIProcessingJobReviewView(APIView):
@@ -585,6 +661,178 @@ class DentistPatientLinkRequestView(APIView):
             is_active=False,
         )
         return Response(DentistPatientLinkSerializer(link).data, status=status.HTTP_201_CREATED)
+
+
+# ─── DentalReport ViewSet ────────────────────────────────────────────────────
+
+class DentalReportListView(generics.ListAPIView):
+    serializer_class = DentalReportSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
+        qs = (
+            DentalReport.objects
+            .filter(deleted_at__isnull=True)
+            .select_related('patient__patient', 'dentist__dentist', 'edited_by')
+        )
+        if dentist_profile:
+            qs = qs.filter(ct_scan__dentist_patient_link__dentist=dentist_profile)
+        elif patient_profile:
+            qs = qs.filter(ct_scan__dentist_patient_link__patient=patient_profile)
+        else:
+            return qs.none()
+
+        # Optional filters
+        params = self.request.query_params
+        if ct_scan_id := params.get('ct_scan__id'):
+            qs = qs.filter(ct_scan_id=ct_scan_id)
+        if patient_id := params.get('patient__id'):
+            qs = qs.filter(patient__patient__user_id=patient_id)
+        if report_status := params.get('status'):
+            qs = qs.filter(status=report_status)
+        if created_after := params.get('created_after'):
+            qs = qs.filter(created_at__date__gte=created_after)
+        if created_before := params.get('created_before'):
+            qs = qs.filter(created_at__date__lte=created_before)
+        return qs
+
+
+class DentalReportDetailView(generics.RetrieveAPIView):
+    serializer_class = DentalReportSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
+        qs = DentalReport.objects.filter(deleted_at__isnull=True).select_related(
+            'patient__patient', 'dentist__dentist', 'edited_by'
+        )
+        if dentist_profile:
+            return qs.filter(ct_scan__dentist_patient_link__dentist=dentist_profile)
+        if patient_profile:
+            return qs.filter(ct_scan__dentist_patient_link__patient=patient_profile)
+        return qs.none()
+
+
+class DentalReportUpdateView(generics.UpdateAPIView):
+    """PATCH only — edits report_text; blocks changes once confirmed."""
+    serializer_class = DentalReportSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['patch']
+
+    def get_queryset(self):
+        dentist_profile, _ = _get_role_profiles(self.request)
+        if not dentist_profile:
+            return DentalReport.objects.none()
+        return DentalReport.objects.filter(
+            ct_scan__dentist_patient_link__dentist=dentist_profile,
+            deleted_at__isnull=True,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        report = self.get_object()
+        if report.status == 'confirmed':
+            raise PermissionDenied('This report has been confirmed and is now immutable.')
+        report.report_text = request.data.get('report_text', report.report_text)
+        report.edit_count += 1
+        report.edited_by = request.user
+        report.status = 'edited'
+        report.save(update_fields=['report_text', 'edit_count', 'edited_by', 'status', 'updated_at'])
+        return Response(DentalReportSerializer(report, context={'request': request}).data)
+
+
+class DentalReportConfirmView(APIView):
+    """POST /dental-reports/{id}/confirm/ — marks report confirmed (immutable)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        dentist_profile, _ = _get_role_profiles(request)
+        if not dentist_profile:
+            raise PermissionDenied('Only dentists can confirm reports.')
+        report = generics.get_object_or_404(
+            DentalReport.objects.filter(
+                ct_scan__dentist_patient_link__dentist=dentist_profile,
+                deleted_at__isnull=True,
+            ),
+            pk=pk,
+        )
+        if report.status == 'confirmed':
+            return Response({'detail': 'Already confirmed.'}, status=status.HTTP_200_OK)
+        report.status = 'confirmed'
+        report.save(update_fields=['status', 'updated_at'])
+        return Response(DentalReportSerializer(report, context={'request': request}).data)
+
+
+class DentalReportDeleteView(APIView):
+    """DELETE /dental-reports/{id}/ — soft delete; preserves audit trail."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, pk):
+        dentist_profile, _ = _get_role_profiles(request)
+        if not dentist_profile:
+            raise PermissionDenied('Only dentists can delete reports.')
+        report = generics.get_object_or_404(
+            DentalReport.objects.filter(
+                ct_scan__dentist_patient_link__dentist=dentist_profile,
+            ),
+            pk=pk,
+        )
+        report.deleted_at = timezone.now()
+        report.status = 'deleted'
+        report.save(update_fields=['deleted_at', 'status', 'updated_at'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─── AnnotatedScan ViewSet ───────────────────────────────────────────────────
+
+class AnnotatedScanListView(generics.ListAPIView):
+    serializer_class = AnnotatedScanSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        dentist_profile, patient_profile = _get_role_profiles(self.request)
+        qs = AnnotatedScan.objects.select_related('ct_scan__dentist_patient_link')
+        if dentist_profile:
+            qs = qs.filter(ct_scan__dentist_patient_link__dentist=dentist_profile)
+        elif patient_profile:
+            qs = qs.filter(ct_scan__dentist_patient_link__patient=patient_profile)
+        else:
+            return qs.none()
+        if ct_scan_id := self.request.query_params.get('ct_scan__id'):
+            qs = qs.filter(ct_scan_id=ct_scan_id)
+        return qs
+
+
+class AnnotatedScanImageView(APIView):
+    """Stream the annotated overlay image to authorized users."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        scan = generics.get_object_or_404(
+            AnnotatedScan.objects.select_related('ct_scan__dentist_patient_link'),
+            pk=pk,
+        )
+        link = scan.ct_scan.dentist_patient_link
+        dentist_profile, patient_profile = _get_role_profiles(request)
+        if not (
+            (dentist_profile and link.dentist_id == dentist_profile.pk)
+            or (patient_profile and link.patient_id == patient_profile.pk)
+        ):
+            raise PermissionDenied('You do not have access to this scan.')
+
+        if not scan.image_overlay:
+            raise Http404('Overlay image is missing.')
+
+        try:
+            fh = scan.image_overlay.open('rb')
+        except FileNotFoundError as exc:
+            raise Http404('Overlay image is missing on disk.') from exc
+
+        filename = os.path.basename(scan.image_overlay.name)
+        resp = FileResponse(fh, as_attachment=False, content_type='image/png')
+        resp['Content-Disposition'] = f'inline; filename="{smart_str(filename)}"'
+        resp['Cache-Control'] = 'private, no-store'
+        return resp
 
 
 @api_view(['GET'])

@@ -1,0 +1,37 @@
+──────────────────────────────────────
+PANORAMIC RADIOGRAPH — AI-ASSISTED ANALYSIS REPORT
+──────────────────────────────────────
+Patient:        Ahmed Ben Salah
+Date of Birth:  1985-03-14
+Examination Date: 2026-04-24
+Referring Dentist: Dr. Hanen Balti
+Report Generated: 2026-04-24
+
+1. EXAMINATION CONTEXT
+Panoramic radiograph analyzed using an AI-assisted detection system.
+
+2. REGIONAL FINDINGS
+2a. Upper Jaw (Maxilla)
+- Dental caries (tooth decay) on tooth #26 (upper jaw) with active carious lesion showing significant radiolucency, suggesting advanced demineralization requiring immediate intervention.
+
+2b. Lower Jaw (Mandible)
+- Third molar (wisdom tooth) on tooth #48 (lower jaw) clearly visible; assess eruption status, angulation, impaction risk, and proximity to adjacent structures.
+- Inferior alveolar nerve canal clearly traced in mandibular region; note proximity to root apices and implant planning zones — critical for surgical risk assessment.
+
+2c. General / Bilateral Findings
+No general findings detected.
+
+3. SUMMARY
+The most significant pathological finding is an active carious lesion on tooth #26 in the upper jaw, showing extensive radiolucency indicative of advanced demineralization requiring prompt restorative care. A fully erupted or developing third molar (tooth #48) is present in the lower jaw, necessitating evaluation of its eruption path, angulation, and potential impaction. The inferior alveolar nerve canal is clearly visualized in the mandible, and its proximity to tooth roots and implant sites should be considered in any surgical planning to mitigate nerve injury risk.
+
+4. RECOMMENDATIONS
+1. Schedule immediate restorative treatment (e.g., excavation and filling) for the carious lesion on tooth #26 to prevent further decay and pulp involvement.
+2. Perform a clinical examination and possibly additional imaging (e.g., periapical or CBCT) to assess the eruption status, angulation, and impaction risk of the lower third molar #48.
+3. Evaluate the need for prophylactic removal of tooth #48 based on its position and potential pathology, especially if signs of impaction or pericoronitis are present.
+4. Incorporate the mapped location of the inferior alveolar nerve canal into any surgical planning (e.g., extractions, implant placement) to minimize risk of neurosensory deficit.
+5. Recommend a follow-up panoramic radiograph in 6–12 months to monitor healing post-treatment and assess any changes in the third molar or surrounding bone.
+
+──────────────────────────────────────
+⚠ AI-GENERATED REPORT — PENDING CLINICIAN VALIDATION
+This report was produced by an AI-assisted image analysis system and is NOT a clinical diagnosis.
+All findings must be reviewed and validated by a licensed dental professional before any

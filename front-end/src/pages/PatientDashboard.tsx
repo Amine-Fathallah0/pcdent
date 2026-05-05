@@ -6,11 +6,12 @@ import AppointmentScheduler from '../components/appointments/AppointmentSchedule
 import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
 import FullReportModal from '../components/FullReportModal';
-import AuthenticatedScanImage from '../components/AuthenticatedScanImage';
+import PatientCaseDetailView from '../components/PatientCaseDetailView';
 import TextType from '../components/ui/TextType';
 import AnimatedList from '../components/ui/AnimatedList';
 import { Icon } from '../components/ui';
-import { fetchJob, fetchJobs, fetchMyLinks, generateDraft, requestDentistLink, uploadCTScan, type AIJobDto } from '../lib/backendApi';
+import { fetchJob, fetchJobs, fetchMyLinks, requestDentistLink, uploadCTScan, type AIJobDto } from '../lib/backendApi';
+import { getBackendJobStatusLabel, getBackendJobStatusClass } from '../lib/jobUtils';
 import { 
   database, 
   createCase,
@@ -47,43 +48,6 @@ const validateFile = (file: File): { valid: boolean; error?: string } => {
   return { valid: true };
 };
 
-const getBackendJobStatusLabel = (status: AIJobDto['status']): string => {
-  switch (status) {
-    case 'queued':
-      return 'Queued';
-    case 'segmentation_pending':
-      return 'Segmentation Pending';
-    case 'report_requested':
-      return 'Report Requested';
-    case 'draft_ready':
-      return 'Draft Ready for Review';
-    case 'dentist_reviewed':
-      return 'Reviewed by Dentist';
-    case 'finalized':
-      return 'Finalized';
-    case 'failed':
-      return 'Processing Failed';
-    default:
-      return 'Unknown Status';
-  }
-};
-
-const getBackendJobStatusClass = (status: AIJobDto['status']): string => {
-  switch (status) {
-    case 'queued':
-    case 'segmentation_pending':
-    case 'report_requested':
-      return 'uploaded';
-    case 'draft_ready':
-    case 'failed':
-      return 'needs-review';
-    case 'dentist_reviewed':
-    case 'finalized':
-      return 'finalized';
-    default:
-      return 'uploaded';
-  }
-};
 
 const getRecentActivityTone = (label: string): 'success' | 'warning' | 'info' => {
   const value = label.toLowerCase();
@@ -136,6 +100,7 @@ const PatientDashboard = () => {
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'processing' | 'complete' | 'error'>('idle');
+  const [uploadError, setUploadError] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0); // Triggers backend data refresh after local updates
   const [backendJobs, setBackendJobs] = useState<AIJobDto[]>([]);
@@ -361,6 +326,7 @@ const PatientDashboard = () => {
 
     setUploadStatus('uploading');
     setUploadProgress(0);
+    setUploadError('');
 
     // Simulate upload progress
     const uploadInterval = setInterval(() => {
@@ -382,11 +348,12 @@ const PatientDashboard = () => {
 
     try {
       const links = await fetchMyLinks();
-      const currentUserId = localStorage.getItem('user_id');
-      const myLink = links.find((link) => link.patient === currentUserId) || links[0];
+      const myLink = links.find((link) => link.patient === CURRENT_PATIENT_ID) || links[0];
 
       if (!myLink) {
-        throw new Error('No active dentist link found.');
+        setUploadError('You are not connected to a dentist yet. Use the "Connect to a dentist" panel on your dashboard to link your account first.');
+        setUploadStatus('error');
+        return;
       }
 
       const uploaded = await uploadCTScan(
@@ -418,7 +385,8 @@ const PatientDashboard = () => {
       createdCase.status = 'AI_ANALYZED';
       createdCase.aiAnalyzedAt = new Date().toISOString();
 
-      await generateDraft(uploaded.job.job_id);
+      // Analysis is triggered automatically via the CTScan post_save signal on the backend.
+      // No need to call generateDraft here — doing so risks a 400 if the task already ran.
 
       setUploadStatus('complete');
 
@@ -442,9 +410,11 @@ const PatientDashboard = () => {
       }, 2000);
     } catch (error) {
       console.error(error);
+      const msg = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setUploadError(msg ?? 'Something went wrong. Please check your connection and try again.');
       setUploadStatus('error');
     }
-  }, [uploadedFile]);
+  }, [uploadedFile, CURRENT_PATIENT_ID, CURRENT_PATIENT_NAME]);
 
   // Clear upload
   const clearUpload = useCallback(() => {
@@ -452,6 +422,7 @@ const PatientDashboard = () => {
     setUploadPreview(null);
     setUploadProgress(0);
     setUploadStatus('idle');
+    setUploadError('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -759,14 +730,41 @@ const PatientDashboard = () => {
         );
 
       // ============== PATIENT RESULTS ==============
-      case 'patient-results':
+      case 'patient-results': {
+        const PENDING_STATUSES = ['queued', 'segmentation_pending', 'report_requested'];
+        const pendingJobs = sortedBackendJobs.filter(j => PENDING_STATUSES.includes(j.status));
+        const readyJobs = sortedBackendJobs.filter(j => !PENDING_STATUSES.includes(j.status));
         return (
           <>
             <h2 className="patient-view-title">My Results</h2>
 
-            {sortedBackendJobs.length > 0 ? (
+            {pendingJobs.length > 0 && (
+              <div className="results-list" style={{ marginBottom: 'var(--space-16)' }}>
+                {pendingJobs.map((job) => (
+                  <div className="result-card result-card--patient card" key={job.job_id} style={{ opacity: 0.85 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <h3 className="result-title" style={{ margin: '0 0 var(--space-4) 0' }}>Scan #{job.ct_scan_id}</h3>
+                        <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                          Uploaded: {formatDate(job.created_at)}
+                          {job.dentist_name && <> · Dr. {job.dentist_name}</>}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-10)', color: 'var(--color-primary)', fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: 'spin 1.2s linear infinite' }}>
+                          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                        </svg>
+                        Under AI Analysis
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {readyJobs.length > 0 ? (
               <div className="results-list">
-                {sortedBackendJobs.map((job) => {
+                {readyJobs.map((job) => {
                   const statusLabel = getBackendJobStatusLabel(job.status);
                   const statusClass = getBackendJobStatusClass(job.status);
                   const completedDate = job.completed_at;
@@ -892,6 +890,7 @@ const PatientDashboard = () => {
             )}
           </>
         );
+      }
 
       // ============== PATIENT UPLOAD (Panoramic Only) ==============
       case 'patient-upload':
@@ -973,7 +972,7 @@ const PatientDashboard = () => {
                 <div className="upload-feedback upload-feedback--error">
                   <Icon name="alert-triangle" />
                   <div>
-                    <strong>Upload Failed!</strong> Please try again.
+                    <strong>Upload Failed.</strong> {uploadError || 'Please try again.'}
                   </div>
                 </div>
               )}
@@ -1336,131 +1335,14 @@ const PatientDashboard = () => {
         );
 
       // ============== PATIENT CASE DETAIL (read-only) ==============
-      case 'patient-case-detail': {
-        if (!selectedJob) {
-          setActiveView('patient-results');
-          return null;
-        }
-        const job = selectedJob;
-        const imageUrl = job.annotated_image_url || job.scan_file_url;
-        const reportText = job.draft_report;
-        const notesText = job.dentist_notes;
-        const isFinalized = job.status === 'finalized';
-        const isReviewed = job.status === 'dentist_reviewed' || job.status === 'finalized';
+      case 'patient-case-detail':
+        if (!selectedJob) { setActiveView('patient-results'); return null; }
         return (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-16)', marginBottom: 'var(--space-24)' }}>
-              <button
-                className="btn btn--outline btn--sm"
-                onClick={() => { setActiveView('patient-results'); setSelectedJob(null); }}
-              >
-                <Icon name="chevron-left" /> Back to Results
-              </button>
-              <div style={{ flex: 1 }}>
-                <h2 className="patient-view-title" style={{ margin: 0 }}>
-                  Scan #{job.ct_scan_id}
-                </h2>
-                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                  Uploaded {formatDate(job.created_at)}
-                  {job.dentist_name && <> · Dr. {job.dentist_name}</>}
-                </div>
-              </div>
-              <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-sm)', padding: '6px 14px' }}>
-                {getBackendJobStatusLabel(job.status)}
-              </span>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-24)', alignItems: 'start' }}>
-              {/* LEFT — Scan viewer */}
-              <div className="card" style={{ padding: 'var(--space-20)' }}>
-                <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-16)' }}>
-                  Your Scan
-                  {job.annotated_image_url && (
-                    <span style={{ marginLeft: 'var(--space-8)', fontSize: 'var(--font-size-xs)', color: '#047857', background: '#D1FAE5', padding: '2px 8px', borderRadius: '12px' }}>
-                      AI Annotated
-                    </span>
-                  )}
-                </h3>
-                {imageUrl ? (
-                  <AuthenticatedScanImage
-                    src={imageUrl}
-                    alt="Dental Scan"
-                    style={{ width: '100%', borderRadius: 'var(--radius-md)', display: 'block', background: '#000' }}
-                  />
-                ) : (
-                  <div style={{ width: '100%', aspectRatio: '1', background: '#0F172A', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 'var(--space-12)' }}>
-                    <Icon name="activity" />
-                    <div style={{ fontSize: 'var(--font-size-sm)', textAlign: 'center', maxWidth: '220px', lineHeight: 1.5 }}>
-                      Scan image will appear here once it has been processed.
-                    </div>
-                  </div>
-                )}
-                {!job.annotated_image_url && imageUrl && (
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', marginTop: 'var(--space-8)', textAlign: 'center' }}>
-                    Showing original scan. AI markup will be added once available.
-                  </p>
-                )}
-              </div>
-
-              {/* RIGHT — Report */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-16)' }}>
-                {!isReviewed && (
-                  <div className="alert info" style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 'var(--space-12)',
-                    padding: 'var(--space-14)',
-                    background: 'var(--color-bg-1)',
-                    borderRadius: 'var(--radius-md)',
-                    borderLeft: '4px solid var(--color-primary)',
-                  }}>
-                    <Icon name="info" />
-                    <div style={{ fontSize: 'var(--font-size-sm)' }}>
-                      Your report is still being prepared. Your dentist will review the AI draft and share final notes here once ready.
-                    </div>
-                  </div>
-                )}
-
-                <div className="card" style={{ padding: 'var(--space-20)' }}>
-                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
-                    AI Draft Report
-                  </h3>
-                  {reportText ? (
-                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.8', color: 'var(--color-text)', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', maxHeight: '260px', overflowY: 'auto' }}>
-                      {reportText}
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
-                      The AI draft report has not been generated yet.
-                    </p>
-                  )}
-                </div>
-
-                <div className="card" style={{ padding: 'var(--space-20)' }}>
-                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
-                    Dentist's Notes
-                  </h3>
-                  {notesText ? (
-                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.7', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', color: 'var(--color-text)' }}>
-                      {notesText}
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
-                      {isReviewed ? 'No notes were added by your dentist.' : 'Your dentist has not added notes yet.'}
-                    </p>
-                  )}
-                </div>
-
-                {isFinalized && (
-                  <div style={{ padding: 'var(--space-12)', background: '#D1FAE5', color: '#047857', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)', display: 'flex', alignItems: 'center', gap: 'var(--space-8)' }}>
-                    <Icon name="check-circle" /> Report finalized on {job.completed_at ? formatDate(job.completed_at) : '—'}
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
+          <PatientCaseDetailView
+            job={selectedJob}
+            onBack={() => { setActiveView('patient-results'); setSelectedJob(null); }}
+          />
         );
-      }
 
       default:
         return <p>View not found</p>;

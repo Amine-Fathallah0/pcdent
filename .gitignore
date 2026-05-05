@@ -31,5 +31,8 @@ db.sqlite3-journal
 node_modules/
 front-end/node_modules/
 
+# Model weights (large binary files, not committed)
+*.pt
+
 # Environment variables
 .env
