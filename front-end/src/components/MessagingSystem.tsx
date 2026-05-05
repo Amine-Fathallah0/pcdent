@@ -284,10 +284,16 @@ const MessagingSystem = ({ userId, userRole }: MessagingSystemProps) => {
   );
 
   const filteredConversations = useMemo(() => {
-    const term = debouncedSearch.toLowerCase();
+    const term = debouncedSearch.trim().toLowerCase();
     if (!term) return conversations;
-    return conversations.filter((c) => c.other_user_name.toLowerCase().includes(term));
+    return conversations.filter((c) => {
+      const name = (c.other_user_name ?? '').toLowerCase();
+      const lastMsg = (c.last_message ?? '').toLowerCase();
+      return name.includes(term) || lastMsg.includes(term);
+    });
   }, [conversations, debouncedSearch]);
+
+  const isSearching = debouncedSearch.trim().length > 0;
 
   const selectedConversation = useMemo(
     () => conversations.find((c) => c.id === selectedId) ?? null,
@@ -336,6 +342,12 @@ const MessagingSystem = ({ userId, userRole }: MessagingSystemProps) => {
                 formatTime={formatMessageTime}
               />
             ))
+          ) : isSearching ? (
+            <EmptyState
+              icon="search"
+              title="No matches"
+              description={`Nothing found for "${debouncedSearch.trim()}".`}
+            />
           ) : (
             <EmptyState
               icon="message-circle"
