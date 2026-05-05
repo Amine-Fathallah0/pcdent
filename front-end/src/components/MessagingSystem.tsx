@@ -101,6 +101,7 @@ const MessagingSystem = ({ userId, userRole }: MessagingSystemProps) => {
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [loadingConvs, setLoadingConvs] = useState(true);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [sending, setSending] = useState(false);
@@ -236,6 +237,13 @@ const MessagingSystem = ({ userId, userRole }: MessagingSystemProps) => {
     inputRef.current?.focus();
   }, []);
 
+  // Auto-focus input whenever the selected conversation changes.
+  useEffect(() => {
+    if (selectedId !== null) {
+      inputRef.current?.focus();
+    }
+  }, [selectedId]);
+
   // Auto-scroll on new messages.
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -253,6 +261,7 @@ const MessagingSystem = ({ userId, userRole }: MessagingSystemProps) => {
         // The WebSocket will also push this back; dedupe by id in the message handler.
         setMessages((prev) => (prev.some((m) => m.id === created.id) ? prev : [...prev, created]));
         setNewMessage('');
+        setTimeout(() => inputRef.current?.focus(), 0);
         // Promote this conversation to the top of the list.
         setConversations((prev) => {
           const idx = prev.findIndex((c) => c.id === selectedId);
@@ -290,18 +299,28 @@ const MessagingSystem = ({ userId, userRole }: MessagingSystemProps) => {
       <aside className="messaging__sidebar">
         <header className="messaging__sidebar-header">
           <div className="messaging__sidebar-title">
-            <h2>Messages</h2>
+            <span className="messaging__sidebar-heading">All Messages</span>
+            <button
+              className="btn btn--icon btn--ghost"
+              onClick={() => { setSearchOpen(o => !o); setSearchTerm(''); }}
+              aria-label="Toggle search"
+            >
+              <Icon name={searchOpen ? 'x' : 'search'} size={18} />
+            </button>
           </div>
-          <div className="messaging__search">
-            <Icon name="search" size={18} className="messaging__search-icon" />
-            <input
-              type="search"
-              placeholder="Search conversations..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="messaging__search-input"
-            />
-          </div>
+          {searchOpen && (
+            <div className="messaging__search">
+              <Icon name="search" size={16} className="messaging__search-icon" />
+              <input
+                autoFocus
+                type="search"
+                placeholder="Search conversations..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="messaging__search-input"
+              />
+            </div>
+          )}
         </header>
 
         <div className="messaging__conversations">
@@ -374,6 +393,7 @@ const MessagingSystem = ({ userId, userRole }: MessagingSystemProps) => {
                 className="btn btn--primary btn--icon"
                 disabled={!newMessage.trim() || sending}
                 aria-label="Send message"
+                tabIndex={-1}
               >
                 <Icon name="send" size={18} />
               </button>
