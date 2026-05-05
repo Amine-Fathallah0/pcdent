@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
-from .models import AIProcessingJob, Appointment, CTScan, Dentist, DentistPatientLink, Patient, User
+from .models import AIProcessingJob, AnnotatedScan, Appointment, CTScan, Dentist, DentalReport, DentistPatientLink, Patient, User
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -98,6 +98,8 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
     patient_name = serializers.SerializerMethodField()
     dentist_name = serializers.SerializerMethodField()
     scan_file_url = serializers.SerializerMethodField()
+    annotated_image_url = serializers.SerializerMethodField()
+    mask_image_url = serializers.SerializerMethodField()
 
     def get_patient_name(self, obj):
         try:
@@ -126,6 +128,24 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    def get_annotated_image_url(self, obj):
+        if getattr(obj, 'annotated_image', None):
+            path = f'/jobs/{obj.job_id}/annotated/'
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(path)
+            return path
+        return obj.annotated_image_url or None
+
+    def get_mask_image_url(self, obj):
+        if getattr(obj, 'mask_image', None):
+            path = f'/jobs/{obj.job_id}/mask/'
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(path)
+            return path
+        return None
+
     class Meta:
         model = AIProcessingJob
         fields = [
@@ -137,6 +157,8 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
             "status",
             "is_fallback_mode",
             "annotated_image_url",
+            "mask_image_url",
+            "mask_label_map",
             "draft_report",
             "dentist_notes",
             "error_message",
@@ -153,6 +175,8 @@ class AIProcessingJobSerializer(serializers.ModelSerializer):
             "status",
             "is_fallback_mode",
             "annotated_image_url",
+            "mask_image_url",
+            "mask_label_map",
             "draft_report",
             "dentist_notes",
             "error_message",
@@ -220,3 +244,67 @@ class PatientRegistrationSerializer(BaseRegistrationSerializer):
             contact_number=contact_number,
             address=address,
         )
+
+
+# ─── DentalReport ────────────────────────────────────────────────────────────
+
+class _ReportPatientSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='patient.full_name', read_only=True)
+    dob = serializers.DateField(source='date_of_birth', read_only=True)
+
+    class Meta:
+        model = Patient
+        fields = ['name', 'dob']
+
+
+class _ReportDentistSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='dentist.full_name', read_only=True)
+
+    class Meta:
+        model = Dentist
+        fields = ['name']
+
+
+class _ReportEditorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['user_id', 'full_name']
+
+
+class DentalReportSerializer(serializers.ModelSerializer):
+    ct_scan = serializers.IntegerField(source='ct_scan_id', read_only=True)
+    patient = _ReportPatientSerializer(read_only=True)
+    dentist = _ReportDentistSerializer(read_only=True)
+    edited_by = _ReportEditorSerializer(read_only=True)
+
+    class Meta:
+        model = DentalReport
+        fields = [
+            'id', 'ct_scan', 'patient', 'dentist',
+            'report_text', 'status', 'raw_detections',
+            'edited_by', 'edit_count', 'error_message',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'ct_scan', 'patient', 'dentist',
+            'status', 'raw_detections',
+            'edited_by', 'edit_count', 'error_message',
+            'created_at', 'updated_at',
+        ]
+
+
+# ─── AnnotatedScan ───────────────────────────────────────────────────────────
+
+class AnnotatedScanSerializer(serializers.ModelSerializer):
+    ct_scan = serializers.IntegerField(source='ct_scan_id', read_only=True)
+    image_url = serializers.SerializerMethodField()
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        path = f'/annotated-scans/{obj.pk}/image/'
+        return request.build_absolute_uri(path) if request else path
+
+    class Meta:
+        model = AnnotatedScan
+        fields = ['id', 'ct_scan', 'image_url', 'image_format', 'created_at']
+        read_only_fields = fields

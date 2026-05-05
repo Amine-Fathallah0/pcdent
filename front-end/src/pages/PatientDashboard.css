@@ -786,6 +786,7 @@
 .patient-main-card,
 .patient-right-card {
     border-radius: 18px;
+    padding: var(--space-20);
 }
 
 /* standalone heading above content in right cards */
@@ -869,7 +870,7 @@
     width: 100%;
     border: 1px solid var(--color-card-border);
     border-radius: 14px;
-    background: var(--color-surface);
+    background: color-mix(in oklab, var(--color-surface) 60%, transparent);
     color: var(--color-text);
     padding: var(--space-12);
     display: flex;
@@ -997,7 +998,7 @@
 html.dark .patient-action-btn,
 html[data-color-scheme="dark"] .patient-action-btn {
     border-color: rgba(119, 124, 124, 0.32);
-    background: color-mix(in oklab, var(--color-surface) 88%, transparent);
+    background: color-mix(in oklab, var(--color-surface) 50%, transparent);
 }
 
 html.dark .patient-metric-card,

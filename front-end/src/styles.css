@@ -558,19 +558,75 @@ select.form-control {
 }
 
 
-/* Card component */
+/* Card component — frosted glass */
 
 .card {
-    background-color: var(--color-surface);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--color-card-border);
-    box-shadow: var(--shadow-sm);
-    overflow: hidden;
-    transition: box-shadow var(--duration-normal) var(--ease-standard);
+    position: relative;
+    background: rgba(255, 255, 253, 0.84);
+    backdrop-filter: blur(14px) saturate(1.6);
+    -webkit-backdrop-filter: blur(14px) saturate(1.6);
+    border-radius: var(--radius-xl);
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    box-shadow:
+        0 2px 12px rgba(0, 0, 0, 0.06),
+        0 1px 4px rgba(0, 0, 0, 0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    overflow: visible;
+    transition: box-shadow var(--duration-normal) var(--ease-standard),
+                transform var(--duration-fast) var(--ease-standard);
+}
+
+.card::before {
+    content: '';
+    position: absolute;
+    bottom: -7px;
+    left: 7px;
+    right: 7px;
+    height: 100%;
+    background: rgba(255, 255, 253, 0.45);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: inherit;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    z-index: -1;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.04);
+    pointer-events: none;
 }
 
 .card:hover {
-    box-shadow: var(--shadow-md);
+    box-shadow:
+        0 4px 20px rgba(0, 0, 0, 0.09),
+        0 2px 6px rgba(0, 0, 0, 0.05),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+@media (prefers-color-scheme: dark) {
+    .card {
+        background: rgba(38, 40, 40, 0.80);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow:
+            0 2px 12px rgba(0, 0, 0, 0.20),
+            0 1px 4px rgba(0, 0, 0, 0.12),
+            inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    }
+    .card::before {
+        background: rgba(31, 33, 33, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+}
+
+[data-color-scheme="dark"] .card {
+    background: rgba(38, 40, 40, 0.80);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow:
+        0 2px 12px rgba(0, 0, 0, 0.20),
+        0 1px 4px rgba(0, 0, 0, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+[data-color-scheme="dark"] .card::before {
+    background: rgba(31, 33, 33, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .card__body {
@@ -1806,7 +1862,9 @@ button,
                 overflow 0ms 240ms;
 }
 
-.sidebar--open {
+.sidebar--open,
+.sidebar:hover,
+.sidebar:focus-within {
     width: var(--sidebar-expanded-width);
     padding: var(--space-16);
     padding-bottom: 136px;
@@ -1834,8 +1892,31 @@ button,
     justify-content: center;
 }
 
-.sidebar--open .sidebar-brand {
+.sidebar:not(.sidebar--open):not(:hover):not(:focus-within) .sidebar-brand {
+    gap: 0;
+}
+
+.sidebar--open .sidebar-brand,
+.sidebar:hover .sidebar-brand,
+.sidebar:focus-within .sidebar-brand {
     justify-content: flex-start;
+}
+
+.sidebar-brand__icon {
+    width: 52px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    transition: opacity 130ms ease, max-width 170ms ease, transform 170ms ease;
+}
+
+.sidebar-brand__mark {
+    width: 46px;
+    height: 46px;
+    display: block;
+    object-fit: contain;
 }
 
 .sidebar-header-top {
@@ -1869,10 +1950,21 @@ button,
     transition: opacity 130ms ease, max-width 170ms ease, transform 170ms ease;
 }
 
-.sidebar--open .sidebar-brand__text {
+.sidebar--open .sidebar-brand__text,
+.sidebar:hover .sidebar-brand__text,
+.sidebar:focus-within .sidebar-brand__text {
     opacity: 1;
     max-width: 240px;
     transform: translateX(0);
+}
+
+.sidebar--open .sidebar-brand__icon,
+.sidebar:hover .sidebar-brand__icon,
+.sidebar:focus-within .sidebar-brand__icon {
+    opacity: 0;
+    max-width: 0;
+    transform: translateX(-6px);
+    overflow: hidden;
 }
 
 .sidebar-brand__kicker,
@@ -2009,14 +2101,18 @@ button,
     pointer-events: none;
 }
 
-.sidebar--open .sidebar-link__label {
+.sidebar--open .sidebar-link__label,
+.sidebar:hover .sidebar-link__label,
+.sidebar:focus-within .sidebar-link__label {
     opacity: 1;
     max-width: 200px;
     transform: translateX(0);
     pointer-events: auto;
 }
 
-.sidebar--open .sidebar-link {
+.sidebar--open .sidebar-link,
+.sidebar:hover .sidebar-link,
+.sidebar:focus-within .sidebar-link {
     width: 100%;
     margin: 0;
     padding: 10px 12px;
@@ -2072,7 +2168,9 @@ button,
                 right 240ms var(--ease-standard);
 }
 
-.sidebar--open .sidebar-footer {
+.sidebar--open .sidebar-footer,
+.sidebar:hover .sidebar-footer,
+.sidebar:focus-within .sidebar-footer {
     max-height: 120px;
     left: var(--space-16);
     right: var(--space-16);
@@ -2088,7 +2186,9 @@ button,
     transition: opacity 130ms ease, max-width 170ms ease, transform 170ms ease;
 }
 
-.sidebar--open .sidebar-footer .btn {
+.sidebar--open .sidebar-footer .btn,
+.sidebar:hover .sidebar-footer .btn,
+.sidebar:focus-within .sidebar-footer .btn {
     opacity: 1;
     max-width: 220px;
     pointer-events: auto;
@@ -2136,7 +2236,9 @@ button,
     color: var(--color-text);
 }
 
-.sidebar--open .sidebar-toggle-btn {
+.sidebar--open .sidebar-toggle-btn,
+.sidebar:hover .sidebar-toggle-btn,
+.sidebar:focus-within .sidebar-toggle-btn {
     width: 100%;
     margin: 0 0 var(--space-8);
     padding: 10px 12px;
@@ -5696,7 +5798,8 @@ html.theme-transitioning *::after {
 }
 
 .perio-workspace {
-    /* Specific styles for periodontal workspace */
+    display: flex;
+    flex-direction: column;
 }
 
 
@@ -7434,6 +7537,7 @@ html.theme-transitioning *::after {
     line-height: 1.4;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
