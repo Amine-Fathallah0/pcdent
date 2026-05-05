@@ -1,0 +1,478 @@
+/* ────────────────────────────────────────────────────────────
+   DentistCaseDetailView
+   ──────────────────────────────────────────────────────────── */
+
+.cdv-root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20, 20px);
+}
+
+/* ── Top bar ──────────────────────────────────────────────── */
+.cdv-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16, 16px);
+  flex-wrap: wrap;
+}
+
+.cdv-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4, 4px);
+  padding: var(--space-6, 6px) var(--space-10, 10px);
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm, 0.875rem);
+  font-family: var(--font-family-base, inherit);
+  cursor: pointer;
+  border-radius: var(--radius-md, 8px);
+  transition: color 150ms, background 150ms;
+  flex-shrink: 0;
+}
+.cdv-back:hover {
+  color: var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 8%, transparent);
+}
+
+.cdv-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.cdv-meta__title {
+  font-size: var(--font-size-2xl, 1.5rem);
+  font-weight: var(--font-weight-bold, 700);
+  color: var(--color-text);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.cdv-meta__sub {
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text-secondary);
+  margin-top: 3px;
+}
+
+/* Status pills */
+.cdv-pill {
+  font-size: var(--font-size-xs, 0.75rem);
+  font-weight: var(--font-weight-semibold, 600);
+  padding: 5px 13px;
+  border-radius: 100px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cdv-pill--sky   { background: rgba(14, 165, 233, 0.10); color: #0369a1; border: 1px solid rgba(14, 165, 233, 0.28); }
+.cdv-pill--amber { background: rgba(245, 158, 11, 0.10); color: #b45309; border: 1px solid rgba(245, 158, 11, 0.28); }
+.cdv-pill--green { background: rgba(16, 185, 129, 0.10); color: #065f46; border: 1px solid rgba(16, 185, 129, 0.28); }
+
+/* ── Two-column layout ────────────────────────────────────── */
+.cdv-layout {
+  display: grid;
+  grid-template-columns: 47fr 53fr;
+  gap: var(--space-24, 24px);
+  align-items: start;
+}
+
+/* ── Scan viewer (left) ───────────────────────────────────── */
+.cdv-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10, 10px);
+}
+
+.cdv-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6, 6px);
+}
+
+.cdv-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs, 0.75rem);
+  color: var(--color-text-secondary);
+  background: color-mix(in oklab, var(--color-surface) 68%, transparent);
+  backdrop-filter: blur(10px) saturate(1.3);
+  -webkit-backdrop-filter: blur(10px) saturate(1.3);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  padding: 4px 10px;
+  border-radius: 100px;
+}
+
+.cdv-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.cdv-canvas-wrap {
+  border-radius: var(--radius-xl, 16px);
+  overflow: hidden;
+  background: #0F172A;
+  line-height: 0;
+}
+
+.cdv-no-scan {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-12, 12px);
+  aspect-ratio: 4 / 3;
+  background: #0F172A;
+  color: #94A3B8;
+  font-size: var(--font-size-sm, 0.875rem);
+  text-align: center;
+  padding: var(--space-24, 24px);
+}
+.cdv-no-scan p { margin: 0; max-width: 200px; line-height: 1.5; }
+
+/* ── Right glass panel ────────────────────────────────────── */
+.cdv-panel {
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in oklab, var(--color-surface) 72%, transparent);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: var(--radius-xl, 16px);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  overflow: hidden;
+}
+
+.cdv-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10, 10px);
+  padding: var(--space-20, 20px) var(--space-24, 24px);
+}
+
+/* Report section fills the panel's remaining vertical space */
+.cdv-section:first-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.cdv-section__label {
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+/* ── Report section header row ────────────────────────────── */
+.cdv-report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8, 8px);
+  min-height: 24px;
+}
+
+.cdv-report-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+/* ── Expanding icon buttons ───────────────────────────────── */
+.cdv-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 5px 7px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold, 600);
+  font-family: var(--font-family-base, inherit);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition:
+    padding 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    gap 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+.cdv-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
+.cdv-icon-btn__label {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+  transition:
+    max-width 220ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 160ms ease;
+  pointer-events: none;
+}
+
+.cdv-icon-btn:not(:disabled):hover {
+  padding: 5px 11px 5px 9px;
+  gap: 5px;
+}
+.cdv-icon-btn:not(:disabled):hover .cdv-icon-btn__label {
+  max-width: 130px;
+  opacity: 1;
+}
+
+/* Notes button */
+.cdv-icon-btn--notes {
+  background: color-mix(in oklab, var(--color-text) 6%, transparent);
+  color: var(--color-text-secondary);
+  border: 1px solid color-mix(in oklab, var(--color-card-border) 80%, transparent);
+}
+.cdv-icon-btn--notes:not(:disabled):hover {
+  background: color-mix(in oklab, var(--color-text) 10%, transparent);
+  color: var(--color-text);
+  border-color: color-mix(in oklab, var(--color-text) 22%, transparent);
+}
+.cdv-icon-btn--notes.is-active {
+  background: color-mix(in oklab, var(--color-primary) 13%, transparent);
+  color: var(--color-primary);
+  border-color: color-mix(in oklab, var(--color-primary) 35%, transparent);
+}
+
+/* Mark Reviewed button */
+.cdv-icon-btn--review {
+  background: rgba(245, 158, 11, 0.08);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+.cdv-icon-btn--review:not(:disabled):hover {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.45);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
+}
+
+/* Finalize & Send button */
+.cdv-icon-btn--send {
+  background: color-mix(in oklab, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  border: 1px solid color-mix(in oklab, var(--color-primary) 32%, transparent);
+}
+.cdv-icon-btn--send:not(:disabled):hover {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 22%, transparent);
+}
+
+/* ── Report body ──────────────────────────────────────────── */
+.cdv-report {
+  font-size: var(--font-size-sm, 0.875rem);
+  line-height: 1.75;
+  color: var(--color-text);
+  flex: 1;
+  min-height: 0;
+  max-height: 700px; /* high ceiling so collapse animation works */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-card-border) transparent;
+  transition: max-height 340ms cubic-bezier(0.4, 0, 0.2, 1),
+              flex 340ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.cdv-report.cdv-report--collapsed {
+  flex: 0 0 160px;
+  max-height: 160px;
+}
+.cdv-report::-webkit-scrollbar        { width: 3px; }
+.cdv-report::-webkit-scrollbar-track  { background: transparent; }
+.cdv-report::-webkit-scrollbar-thumb  { background: var(--color-card-border); border-radius: 99px; }
+
+.cdv-report-header {
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text);
+  margin: var(--space-14, 14px) 0 var(--space-4, 4px);
+  padding: 0;
+}
+.cdv-report-header:first-child { margin-top: 0; }
+
+.cdv-report-bullets {
+  margin: var(--space-4, 4px) 0 var(--space-8, 8px);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 4px);
+}
+
+.cdv-report-bullet {
+  position: relative;
+  padding-left: var(--space-14, 14px);
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text);
+}
+.cdv-report-bullet::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  opacity: 0.7;
+}
+
+.cdv-report-para {
+  margin: 0 0 var(--space-6, 6px);
+  color: var(--color-text);
+}
+.cdv-report-para:last-child { margin-bottom: 0; }
+
+.cdv-report-empty {
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text-secondary);
+  font-style: italic;
+  margin: 0;
+}
+
+/* ── Notes drawer (slides in below report) ────────────────── */
+.cdv-notes-drawer {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-height 340ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 220ms ease;
+}
+.cdv-notes-drawer.is-open {
+  max-height: 300px;
+  opacity: 1;
+}
+
+/* ── Dentist notes textarea ───────────────────────────────── */
+.cdv-notes {
+  width: 100%;
+  min-height: 100px;
+  padding: var(--space-10, 10px) 0 var(--space-8, 8px);
+  background: transparent;
+  border: none;
+  border-top: 1px solid color-mix(in oklab, var(--color-card-border) 70%, transparent);
+  border-radius: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-sm, 0.875rem);
+  font-family: var(--font-family-base, inherit);
+  line-height: 1.65;
+  resize: none;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-top-color 150ms;
+}
+.cdv-notes:focus {
+  border-top-color: var(--color-primary);
+}
+.cdv-notes::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 0.6;
+}
+
+/* ── Generate Draft button (bottom, only when needed) ─────── */
+.cdv-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8, 8px);
+  padding: var(--space-16, 16px) var(--space-24, 24px);
+  border-top: 1px solid color-mix(in oklab, var(--color-card-border) 65%, transparent);
+}
+
+.cdv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8, 8px);
+  padding: var(--space-10, 10px) var(--space-16, 16px);
+  border-radius: var(--radius-md, 8px);
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: var(--font-weight-medium, 500);
+  font-family: var(--font-family-base, inherit);
+  cursor: pointer;
+  transition: background 150ms, color 150ms, border-color 150ms, transform 100ms, opacity 150ms;
+}
+.cdv-btn:disabled    { opacity: 0.45; cursor: not-allowed; }
+.cdv-btn--full       { width: 100%; }
+
+.cdv-btn--ghost {
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-card-border);
+}
+.cdv-btn--ghost:not(:disabled):hover {
+  background: color-mix(in oklab, var(--color-text) 5%, transparent);
+  border-color: color-mix(in oklab, var(--color-text) 28%, var(--color-card-border));
+}
+
+.cdv-btn--primary {
+  background: var(--color-primary);
+  color: #fff;
+  border: 1px solid var(--color-primary);
+}
+.cdv-btn--primary:not(:disabled):hover {
+  background: color-mix(in oklab, var(--color-primary) 86%, #000);
+  border-color: color-mix(in oklab, var(--color-primary) 86%, #000);
+  transform: translateY(-1px);
+}
+
+/* ── Dark mode ────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  .cdv-panel {
+    background: color-mix(in oklab, var(--color-surface) 65%, transparent);
+    border-color: rgba(255, 255, 255, 0.07);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+  .cdv-legend-chip {
+    background: color-mix(in oklab, var(--color-surface) 58%, transparent);
+    border-color: rgba(255, 255, 255, 0.10);
+  }
+  .cdv-pill--sky   { background: rgba(14, 165, 233, 0.14); color: #38bdf8; border-color: rgba(14, 165, 233, 0.30); }
+  .cdv-pill--amber { background: rgba(245, 158, 11, 0.14); color: #fbbf24; border-color: rgba(245, 158, 11, 0.30); }
+  .cdv-pill--green { background: rgba(16, 185, 129, 0.14); color: #34d399; border-color: rgba(16, 185, 129, 0.30); }
+  .cdv-icon-btn--review { color: #fbbf24; }
+}
+
+[data-color-scheme="dark"] .cdv-panel {
+  background: color-mix(in oklab, var(--color-surface) 65%, transparent);
+  border-color: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+[data-color-scheme="dark"] .cdv-legend-chip {
+  background: color-mix(in oklab, var(--color-surface) 58%, transparent);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+[data-color-scheme="dark"] .cdv-pill--sky   { background: rgba(14, 165, 233, 0.14); color: #38bdf8; border-color: rgba(14, 165, 233, 0.30); }
+[data-color-scheme="dark"] .cdv-pill--amber { background: rgba(245, 158, 11, 0.14); color: #fbbf24; border-color: rgba(245, 158, 11, 0.30); }
+[data-color-scheme="dark"] .cdv-pill--green { background: rgba(16, 185, 129, 0.14); color: #34d399; border-color: rgba(16, 185, 129, 0.30); }
+[data-color-scheme="dark"] .cdv-icon-btn--review { color: #fbbf24; }
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .cdv-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .cdv-meta__title {
+    font-size: var(--font-size-xl, 1.25rem);
+  }
+  .cdv-section {
+    padding: var(--space-16, 16px) var(--space-18, 18px);
+  }
+  .cdv-actions {
+    padding: var(--space-16, 16px) var(--space-18, 18px);
+  }
+}

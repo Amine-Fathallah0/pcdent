@@ -261,4 +261,29 @@ STATIC_ROOT = BASE_DIR / 'static'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+CELERY_BROKER_URL = get_env('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = get_env('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TASK_TIME_LIMIT = int(get_env('CELERY_TASK_TIME_LIMIT', '900'))
+CELERY_TASK_SOFT_TIME_LIMIT = int(get_env('CELERY_TASK_SOFT_TIME_LIMIT', '840'))
+CELERY_WORKER_POOL = get_env(
+    'CELERY_WORKER_POOL',
+    'solo' if os.name == 'nt' else 'prefork'
+)
+
+YOLO_MODEL_PATH = Path(
+    get_env(
+        'YOLO_MODEL_PATH',
+        str(BASE_DIR / 'models' / 'yolov8m-seg.pt')
+    )
+)
+
+OPENROUTER_API_KEY = get_env('API_KEY')
+
+REPORT_GENERATION_TIMEOUT = int(get_env('REPORT_GENERATION_TIMEOUT', '30'))
+
+CELERY_TASK_TIMEOUT = int(get_env('CELERY_TASK_TIMEOUT', '120'))
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

@@ -51,6 +51,8 @@ export interface AIJobDto {
     | 'failed';
   is_fallback_mode: boolean;
   annotated_image_url: string;
+  mask_image_url?: string | null;
+  mask_label_map?: Record<string, string> | null;
   draft_report: string;
   dentist_notes: string;
   error_message: string;

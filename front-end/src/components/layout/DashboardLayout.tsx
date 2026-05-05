@@ -34,6 +34,7 @@ const DashboardLayout = ({
   const { logout } = useAuth();
   const { resolvedTheme } = useTheme();
   const brandLogo = resolvedTheme === 'dark' ? '/dentalyze/light.png' : '/dentalyze/dark.png';
+  const brandLogoCollapsed = resolvedTheme === 'dark' ? '/dentalyze/light1.png' : '/dentalyze/dark1.png';
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
@@ -120,6 +121,9 @@ const DashboardLayout = ({
       <aside className={`sidebar${sidebarOpen ? ' sidebar--open' : ''}`} id="sidebar">
         <div className="sidebar-header">
           <div className="sidebar-brand">
+            <div className="sidebar-brand__icon" aria-hidden="true">
+              <img className="sidebar-brand__mark" src={brandLogoCollapsed} alt="" />
+            </div>
             <div className="sidebar-brand__text">
               <img className="sidebar-brand__logo" src={brandLogo} alt="Dentalyze" />
             </div>

@@ -5,8 +5,6 @@ from . import views
 
 app_name = 'dentapp'
 
-# API endpoints will be defined here
-# Front-end is now a separate React service
 urlpatterns = [
     path('', views.api_root, name='api-root'),
     path('login/', views.LoginView.as_view(), name='login'),
@@ -29,10 +27,21 @@ urlpatterns = [
     path('jobs/', views.AIProcessingJobListView.as_view(), name='job-list'),
     path('jobs/<uuid:job_id>/', views.AIProcessingJobDetailView.as_view(), name='job-detail'),
     path('jobs/<uuid:job_id>/generate-draft/', views.AIProcessingJobGenerateDraftView.as_view(), name='job-generate-draft'),
+    path('jobs/<uuid:job_id>/annotated/', views.AIProcessingJobAnnotatedImageView.as_view(), name='job-annotated'),
+    path('jobs/<uuid:job_id>/mask/', views.AIProcessingJobMaskImageView.as_view(), name='job-mask'),
     path('jobs/<uuid:job_id>/review/', views.AIProcessingJobReviewView.as_view(), name='job-review'),
     path('conversations/', views.ConversationListView.as_view(), name='conversations'),
     path('conversations/<int:pk>/messages/', views.ConversationMessagesView.as_view(), name='conversation-messages'),
     path('conversations/<int:pk>/read/', views.ConversationReadView.as_view(), name='conversation-read'),
+    # DentalReport endpoints
+    path('dental-reports/', views.DentalReportListView.as_view(), name='dental-report-list'),
+    path('dental-reports/<int:pk>/', views.DentalReportDetailView.as_view(), name='dental-report-detail'),
+    path('dental-reports/<int:pk>/edit/', views.DentalReportUpdateView.as_view(), name='dental-report-edit'),
+    path('dental-reports/<int:pk>/confirm/', views.DentalReportConfirmView.as_view(), name='dental-report-confirm'),
+    path('dental-reports/<int:pk>/delete/', views.DentalReportDeleteView.as_view(), name='dental-report-delete'),
+    # AnnotatedScan endpoints
+    path('annotated-scans/', views.AnnotatedScanListView.as_view(), name='annotated-scan-list'),
+    path('annotated-scans/<int:pk>/image/', views.AnnotatedScanImageView.as_view(), name='annotated-scan-image'),
 ]
 
 if apps.is_installed('mcp_server'):

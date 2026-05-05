@@ -207,6 +207,7 @@ Dentist ↔ patient chat backed by Django Channels with a Redis channel layer. P
 
 - Python 3.11+
 - PostgreSQL (running locally)
+- Redis (for Celery broker/result backend)
 - Node.js 18+ (for frontend)
 - Docker (for the Redis channel layer used by chat)
 
@@ -235,11 +236,8 @@ python manage.py migrate
 # 6. Create a superuser (optional, for /admin/)
 python manage.py createsuperuser
 
-# 7. Start Redis (required for real-time chat; one-time setup, auto-starts after)
-docker run -d -p 6379:6379 --name redis-chat --restart always redis:alpine
-
-# 8. Start the backend with Daphne (ASGI — required for WebSockets)
-python -m daphne -b 0.0.0.0 -p 8000 mysite.asgi:application
+# 7. Start the backend
+python manage.py runserver
 ```
 
 Backend runs at `http://localhost:8000` (HTTP) and `ws://localhost:8000/ws/chat/` (WebSocket).

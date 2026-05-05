@@ -5,21 +5,15 @@ import AppointmentList from '../components/appointments/AppointmentList';
 import AppointmentScheduler from '../components/appointments/AppointmentScheduler';
 import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
-import AuthenticatedScanImage from '../components/AuthenticatedScanImage';
-import { approveLink, createAppointment, fetchActivePatients, fetchAppointments, fetchJobs, fetchMe, fetchMyLinks, fetchPendingLinks, generateDraft, rejectLink, reviewJob, updateAppointment, uploadCTScan, type ActivePatientDto, type AIJobDto, type AppointmentDto, type MeDto, type PendingLinkDto } from '../lib/backendApi';
+import DentistCaseDetailView from '../components/DentistCaseDetailView';
+import { approveLink, createAppointment, fetchActivePatients, fetchAppointments, fetchJobs, fetchMe, fetchPendingLinks, generateDraft, rejectLink, reviewJob, updateAppointment, uploadCTScan, type ActivePatientDto, type AIJobDto, type AppointmentDto, type MeDto, type PendingLinkDto } from '../lib/backendApi';
+import { getBackendJobStatusLabel, getBackendJobStatusClass } from '../lib/jobUtils';
 import PatientsHub from './PatientsHub';
 import {
-  createCase,
   database,
-  getCasesByDentist,
-  addNotification,
   formatDate,
-  formatDateTime,
   formatTime,
   getAppointmentTypeLabel,
-  getStatusLabel,
-  getStatusClass,
-  type Case,
   type Appointment
 } from '../data/database';
 
@@ -88,62 +82,6 @@ const mapBackendStatusToInboxTab = (status: AIJobDto['status']): InboxTab => {
   }
 };
 
-const getBackendJobStatusClass = (status: AIJobDto['status']): string => {
-  switch (status) {
-    case 'queued':
-    case 'segmentation_pending':
-    case 'report_requested':
-      return 'uploaded';
-    case 'draft_ready':
-    case 'failed':
-      return 'needs-review';
-    case 'dentist_reviewed':
-    case 'finalized':
-      return 'finalized';
-    default:
-      return 'uploaded';
-  }
-};
-
-const getBackendJobStatusLabel = (status: AIJobDto['status']): string => {
-  switch (status) {
-    case 'queued':
-      return 'Queued';
-    case 'segmentation_pending':
-      return 'Segmentation Pending';
-    case 'report_requested':
-      return 'Report Requested';
-    case 'draft_ready':
-      return 'Draft Ready for Review';
-    case 'dentist_reviewed':
-      return 'Dentist Reviewed';
-    case 'finalized':
-      return 'Finalized';
-    case 'failed':
-      return 'Processing Failed';
-    default:
-      return 'Unknown Status';
-  }
-};
-
-const mapBackendJobToCaseStatus = (status: AIJobDto['status']): Case['status'] => {
-  switch (status) {
-    case 'queued':
-    case 'segmentation_pending':
-      return 'UPLOADED';
-    case 'report_requested':
-      return 'AI_ANALYZED';
-    case 'draft_ready':
-    case 'failed':
-      return 'NEEDS_REVIEW';
-    case 'dentist_reviewed':
-      return 'FINALIZED';
-    case 'finalized':
-      return 'SENT_TO_PATIENT';
-    default:
-      return 'UPLOADED';
-  }
-};
 
 const formatLocalDate = (value: Date): string => {
   const year = value.getFullYear();
@@ -182,182 +120,17 @@ const mapAppointmentDtoToUi = (appointment: AppointmentDto): Appointment => {
   };
 };
 
-// Case Review Modal Component
-const CaseReviewModal = ({
-  caseData,
-  onClose,
-  onMarkReviewed,
-  onSendToPatient
-}: {
-  caseData: Case;
-  onClose: () => void;
-  onMarkReviewed: (caseId: string, dentistNotes: string) => Promise<void>;
-  onSendToPatient: (caseId: string, dentistNotes: string) => Promise<void>;
-}) => {
-  const [findingsState, setFindingsState] = useState(
-    caseData.aiFindings.map(f => ({ ...f, reviewed: false, action: 'pending' as 'pending' | 'accepted' | 'modified' | 'rejected' }))
-  );
-  const [patientExplanation, setPatientExplanation] = useState(caseData.patientExplanation || '');
+const VALID_FILE_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'application/dicom'] as const;
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
-  const handleFindingAction = (findingId: string, action: 'accepted' | 'modified' | 'rejected') => {
-    setFindingsState(prev => prev.map(f => 
-      f.id === findingId ? { ...f, action, reviewed: true } : f
-    ));
-  };
-
-  const allReviewed = findingsState.every(f => f.reviewed);
-
-  return (
-    <div className="modal-container" style={{ display: 'flex' }}>
-      <div className="modal-backdrop" onClick={onClose}></div>
-      <div className="modal" style={{ maxWidth: '900px', maxHeight: '90vh', overflow: 'auto' }}>
-        <div className="modal-header">
-          <h2 className="modal-title">Review Case: {caseData.patientName}</h2>
-          <button className="close-modal" onClick={onClose}>
-            <Icon name="x" />
-          </button>
-        </div>
-        
-        <div className="modal-body">
-          {/* Case Info */}
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: '1fr 1fr', 
-            gap: 'var(--space-16)', 
-            marginBottom: 'var(--space-24)',
-            padding: 'var(--space-16)',
-            background: 'var(--color-bg-1)',
-            borderRadius: 'var(--radius-md)'
-          }}>
-            <div><strong>Patient:</strong> {caseData.patientName}</div>
-            <div><strong>Image Type:</strong> {caseData.imageType}</div>
-            <div><strong>Uploaded:</strong> {formatDateTime(caseData.uploadedAt)}</div>
-            <div><strong>Status:</strong> <span className={`status-badge ${getStatusClass(caseData.status)}`}>{getStatusLabel(caseData.status)}</span></div>
-          </div>
-
-          {/* AI Findings Review */}
-          <div style={{ marginBottom: 'var(--space-24)' }}>
-            <h3 style={{ marginBottom: 'var(--space-16)' }}>AI Findings ({caseData.aiFindings.length})</h3>
-            
-            {findingsState.map((finding, index) => (
-              <div key={finding.id} style={{
-                padding: 'var(--space-16)',
-                marginBottom: 'var(--space-12)',
-                background: finding.action === 'accepted' ? '#D1FAE5' : 
-                           finding.action === 'rejected' ? '#FEE2E2' : 
-                           finding.action === 'modified' ? '#FEF3C7' : 'var(--color-bg-1)',
-                borderRadius: 'var(--radius-md)',
-                border: `2px solid ${finding.action === 'accepted' ? '#10B981' : 
-                                    finding.action === 'rejected' ? '#EF4444' : 
-                                    finding.action === 'modified' ? '#F59E0B' : 'var(--color-border)'}`
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-12)' }}>
-                  <div>
-                    <div style={{ fontWeight: 'var(--font-weight-bold)', fontSize: 'var(--font-size-lg)' }}>
-                      Finding #{index + 1}: Tooth {finding.tooth}
-                    </div>
-                    <div style={{ color: 'var(--color-text-secondary)' }}>{finding.condition}</div>
-                  </div>
-                  <span style={{
-                    padding: '4px 12px',
-                    borderRadius: '12px',
-                    fontSize: 'var(--font-size-xs)',
-                    fontWeight: 'var(--font-weight-semibold)',
-                    textTransform: 'uppercase',
-                    background: finding.urgency === 'high' ? '#FEE2E2' : finding.urgency === 'medium' ? '#FEF3C7' : '#D1FAE5',
-                    color: finding.urgency === 'high' ? '#B91C1C' : finding.urgency === 'medium' ? '#B45309' : '#047857'
-                  }}>
-                    {finding.urgency} priority
-                  </span>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-8)', marginBottom: 'var(--space-12)' }}>
-                  <div><strong>Severity:</strong> {finding.severity}</div>
-                  <div><strong>Confidence:</strong> {Math.round(finding.confidence * 100)}%</div>
-                  <div><strong>ICD-10:</strong> {finding.icd10}</div>
-                  <div><strong>CDT:</strong> {finding.cdt_code}</div>
-                </div>
-
-                <div style={{ display: 'flex', gap: 'var(--space-8)' }}>
-                  <button 
-                    className={`btn btn--sm ${finding.action === 'accepted' ? 'btn--success' : 'btn--outline'}`}
-                    onClick={() => handleFindingAction(finding.id, 'accepted')}
-                  >
-                    <Icon name="check-circle" /> Accept
-                  </button>
-                  <button 
-                    className={`btn btn--sm ${finding.action === 'modified' ? 'btn--primary' : 'btn--outline'}`}
-                    onClick={() => handleFindingAction(finding.id, 'modified')}
-                  >
-                    <Icon name="edit" /> Modify
-                  </button>
-                  <button 
-                    className={`btn btn--sm ${finding.action === 'rejected' ? 'btn--danger' : 'btn--outline'}`}
-                    onClick={() => handleFindingAction(finding.id, 'rejected')}
-                  >
-                    <Icon name="x-circle" /> Reject
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Patient Explanation */}
-          <div style={{ marginBottom: 'var(--space-24)' }}>
-            <h3 style={{ marginBottom: 'var(--space-12)' }}>Patient Explanation</h3>
-            <p style={{ color: 'var(--color-text-secondary)', marginBottom: 'var(--space-8)' }}>
-              Write a clear, easy-to-understand summary for the patient about the findings.
-            </p>
-            <textarea
-              value={patientExplanation}
-              onChange={(e) => setPatientExplanation(e.target.value)}
-              placeholder="Explain the findings in patient-friendly language..."
-              style={{
-                width: '100%',
-                minHeight: '120px',
-                padding: 'var(--space-12)',
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--color-border)',
-                fontSize: 'var(--font-size-base)',
-                resize: 'vertical'
-              }}
-            />
-          </div>
-        </div>
-
-        <div className="modal-footer" style={{ 
-          borderTop: '1px solid var(--color-border)', 
-          padding: 'var(--space-16)', 
-          display: 'flex', 
-          justifyContent: 'space-between',
-          alignItems: 'center'
-        }}>
-          <div style={{ color: 'var(--color-text-secondary)' }}>
-            {allReviewed ? '✓ All findings reviewed' : `${findingsState.filter(f => f.reviewed).length}/${findingsState.length} findings reviewed`}
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--space-12)' }}>
-            <button
-              className="btn btn--outline"
-              onClick={() => {
-                void onMarkReviewed(caseData.id, patientExplanation);
-              }}
-            >
-              Save Draft
-            </button>
-            <button 
-              className="btn btn--primary" 
-              disabled={!allReviewed}
-              onClick={() => {
-                void onSendToPatient(caseData.id, patientExplanation);
-              }}
-            >
-              <Icon name="send" /> Finalize & Send to Patient
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+const validateFile = (file: File): { valid: boolean; error?: string } => {
+  if (!VALID_FILE_TYPES.includes(file.type as typeof VALID_FILE_TYPES[number]) && !file.name.toLowerCase().endsWith('.dcm')) {
+    return { valid: false, error: 'Invalid file type. Please upload JPG, PNG, or DICOM files.' };
+  }
+  if (file.size > MAX_FILE_SIZE) {
+    return { valid: false, error: 'File too large. Maximum size is 10MB.' };
+  }
+  return { valid: true };
 };
 
 const DentistDashboard = () => {
@@ -370,8 +143,6 @@ const DentistDashboard = () => {
   const [reviewingJob, setReviewingJob] = useState<AIJobDto | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [jobActionLoading, setJobActionLoading] = useState(false);
-  const [selectedCase, setSelectedCase] = useState<Case | null>(null);
-  const [showReviewModal, setShowReviewModal] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
@@ -545,7 +316,7 @@ const DentistDashboard = () => {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeView, dashboardInboxExpanded, loadJobs]);
+  }, [activeView, loadJobs]);
 
   useEffect(() => {
     if (activeView === 'dentist-patients' || activeView === 'dentist-dashboard') {
@@ -554,8 +325,6 @@ const DentistDashboard = () => {
     }
   }, [activeView, loadActivePatients, loadPendingLinks]);
 
-  // Get dynamic data from database
-  const dentistCases = getCasesByDentist(currentDentistId);
   const chartingPatients = activePatients;
   const dentistPatientsForScheduler = useMemo(
     () => activePatients.map((patient) => ({
@@ -573,52 +342,6 @@ const DentistDashboard = () => {
       && (appointment.status === 'scheduled' || appointment.status === 'confirmed')
     );
   }, [appointments]);
-
-  const backendJobsById = useMemo(() => {
-    const map = new Map<string, AIJobDto>();
-    for (const job of backendJobs) {
-      map.set(job.job_id, job);
-    }
-    return map;
-  }, [backendJobs]);
-
-  const resolvedDentistCases = useMemo(
-    () =>
-      dentistCases.map((caseItem) => {
-        const linkedJob = caseItem.backendJobId ? backendJobsById.get(caseItem.backendJobId) : undefined;
-        if (!linkedJob) {
-          return caseItem;
-        }
-
-        return {
-          ...caseItem,
-          status: mapBackendJobToCaseStatus(linkedJob.status),
-          uploadedAt: linkedJob.created_at || caseItem.uploadedAt,
-          aiAnalyzedAt: linkedJob.updated_at || caseItem.aiAnalyzedAt,
-          finalizedAt: linkedJob.completed_at || caseItem.finalizedAt,
-          sentAt:
-            linkedJob.status === 'finalized'
-              ? linkedJob.completed_at || caseItem.sentAt || caseItem.finalizedAt
-              : caseItem.sentAt,
-          patientExplanation: caseItem.patientExplanation || linkedJob.draft_report || null,
-        };
-      }),
-    [dentistCases, backendJobsById]
-  );
-
-  // File validation
-  const validateFile = (file: File): { valid: boolean; error?: string } => {
-    const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/dicom'];
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    
-    if (!validTypes.includes(file.type) && !file.name.toLowerCase().endsWith('.dcm')) {
-      return { valid: false, error: 'Invalid file type. Please upload JPG, PNG, or DICOM files.' };
-    }
-    if (file.size > maxSize) {
-      return { valid: false, error: 'File too large. Maximum size is 10MB.' };
-    }
-    return { valid: true };
-  };
 
   // Handle file selection
   const handleFileSelect = useCallback((file: File) => {
@@ -708,15 +431,6 @@ const DentistDashboard = () => {
       setUploadStatus('complete');
       setRefreshKey(prev => prev + 1);
 
-      addNotification({
-        userId: currentDentistId,
-        userRole: 'dentist',
-        type: 'case',
-        title: 'Scan Uploaded',
-        message: 'Scan uploaded successfully. Draft report is ready for review.',
-        actionUrl: 'dentist-patients'
-      });
-
       setTimeout(() => {
         setUploadedFile(null);
         setUploadPreview(null);
@@ -739,7 +453,7 @@ const DentistDashboard = () => {
       setUploadError(msg);
       setUploadStatus('error');
     }
-  }, [uploadedFile, selectedPatientForUpload, activePatients, currentDentistId]);
+  }, [uploadedFile, selectedPatientForUpload, activePatients]);
 
   // Clear upload
   const clearUpload = useCallback(() => {
@@ -753,16 +467,13 @@ const DentistDashboard = () => {
   }, []);
 
   // Calculate stats
-  const casesThisMonth = resolvedDentistCases.filter(c => {
-    const caseDate = new Date(c.uploadedAt);
+  const casesThisMonth = useMemo(() => {
     const now = new Date();
-    return caseDate.getMonth() === now.getMonth() && caseDate.getFullYear() === now.getFullYear();
-  }).length;
-
-  // Case filtering
-  const newUploads = resolvedDentistCases.filter(c => c.status === 'AI_ANALYZED' || c.status === 'UPLOADED');
-  const needsReview = resolvedDentistCases.filter(c => c.status === 'NEEDS_REVIEW');
-  const finalized = resolvedDentistCases.filter(c => c.status === 'FINALIZED' || c.status === 'SENT_TO_PATIENT');
+    return backendJobs.filter(job => {
+      const d = new Date(job.created_at);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }).length;
+  }, [backendJobs]);
 
   // Centralized backend status mapping so counts and tabs always use identical logic.
   const backendJobsByInboxTab: Record<InboxTab, AIJobDto[]> = {
@@ -777,15 +488,6 @@ const DentistDashboard = () => {
   const backendNewUploads = backendJobsByInboxTab['new-uploads'];
   const backendNeedsReview = backendJobsByInboxTab['needs-review'];
   const backendFinalized = backendJobsByInboxTab.finalized;
-
-  const getCurrentTabCases = () => {
-    switch (activeInboxTab) {
-      case 'new-uploads': return newUploads;
-      case 'needs-review': return needsReview;
-      case 'finalized': return finalized;
-      default: return newUploads;
-    }
-  };
 
   const getCurrentTabJobs = () => {
     switch (activeInboxTab) {
@@ -1095,16 +797,6 @@ const DentistDashboard = () => {
 
   // Profile handlers
   const handleProfileSave = () => {
-    // In real app, this would save to backend
-    Object.assign(database.dentistProfile, {
-      name: profileForm.name,
-      email: profileForm.email,
-      phone: profileForm.phone,
-      clinic: profileForm.clinic,
-      specialization: profileForm.specialization,
-      address: profileForm.address,
-      availability: profileForm.availability
-    });
     setIsEditingProfile(false);
     setActionFeedback({ type: 'success', message: 'Profile updated successfully!' });
     setTimeout(() => setActionFeedback(null), 4000);
@@ -1121,113 +813,6 @@ const DentistDashboard = () => {
       availability: database.dentistProfile.availability
     });
     setIsEditingProfile(false);
-  };
-
-  // Handle review case
-  const handleReviewCase = (caseItem: Case) => {
-    const resolvedCase = caseItem.backendJobId ? resolvedDentistCases.find(c => c.id === caseItem.id) || caseItem : caseItem;
-    setSelectedCase(resolvedCase);
-    setShowReviewModal(true);
-  };
-
-  // Handle send to patient
-  const handleMarkReviewed = async (caseId: string, dentistNotes: string) => {
-    const targetCase = resolvedDentistCases.find(c => c.id === caseId) || dentistCases.find(c => c.id === caseId);
-    if (!targetCase) {
-      setActionFeedback({ type: 'error', message: 'Unable to find the selected case.' });
-      setTimeout(() => setActionFeedback(null), 4000);
-      return;
-    }
-
-    try {
-      if (targetCase.backendJobId) {
-        await reviewJob(targetCase.backendJobId, 'reviewed', dentistNotes);
-      }
-
-      const caseRecord = (database.cases as Case[]).find(c => c.id === caseId);
-      if (caseRecord) {
-        caseRecord.status = 'FINALIZED';
-        caseRecord.reviewedAt = new Date().toISOString();
-        caseRecord.patientExplanation = dentistNotes || caseRecord.patientExplanation;
-      }
-
-      setShowReviewModal(false);
-      setSelectedCase(null);
-      setRefreshKey(prev => prev + 1);
-      setActionFeedback({ type: 'success', message: 'Review saved and synced with backend.' });
-      setTimeout(() => setActionFeedback(null), 4000);
-    } catch (error) {
-      console.error(error);
-      setActionFeedback({ type: 'error', message: 'Failed to save reviewed state in backend.' });
-      setTimeout(() => setActionFeedback(null), 4000);
-    }
-  };
-
-  const handleSendToPatient = async (caseId: string, dentistNotes: string) => {
-    const targetCase = resolvedDentistCases.find(c => c.id === caseId) || dentistCases.find(c => c.id === caseId);
-    if (!targetCase) {
-      setActionFeedback({ type: 'error', message: 'Unable to find the selected case.' });
-      setTimeout(() => setActionFeedback(null), 4000);
-      return;
-    }
-
-    try {
-      if (targetCase.backendJobId) {
-        await reviewJob(targetCase.backendJobId, 'finalized', dentistNotes || targetCase.patientExplanation || 'Finalized by dentist');
-      }
-
-      const caseRecord = (database.cases as Case[]).find(c => c.id === caseId);
-      if (caseRecord) {
-        caseRecord.status = 'SENT_TO_PATIENT';
-        caseRecord.finalizedAt = caseRecord.finalizedAt || new Date().toISOString();
-        caseRecord.sentAt = new Date().toISOString();
-        caseRecord.patientExplanation = dentistNotes || caseRecord.patientExplanation;
-      }
-
-      setShowReviewModal(false);
-      setSelectedCase(null);
-      setRefreshKey(prev => prev + 1);
-      setActionFeedback({ type: 'success', message: 'Case finalized and synced with backend.' });
-      setTimeout(() => setActionFeedback(null), 4000);
-    } catch (error) {
-      console.error(error);
-      setActionFeedback({ type: 'error', message: 'Failed to finalize case in backend.' });
-      setTimeout(() => setActionFeedback(null), 4000);
-    }
-  };
-
-  // Generate tooth data from cases for selected patient
-  const generateToothData = (patientId: string) => {
-    const toothData: Record<number, { surfaces?: Record<string, string>, status?: string, aiDetected?: boolean, condition?: string }> = {};
-    
-    const patientCases = dentistCases.filter(c => c.patientId === patientId);
-    
-    patientCases.forEach(caseItem => {
-      caseItem.aiFindings.forEach(finding => {
-        toothData[finding.tooth] = {
-          surfaces: { O: 'finding' },
-          aiDetected: true,
-          condition: finding.condition
-        };
-      });
-      caseItem.finalFindings.forEach(finding => {
-        if (finding.status === 'accepted') {
-          toothData[finding.tooth] = {
-            surfaces: { O: 'completed' },
-            aiDetected: false,
-            condition: finding.condition
-          };
-        } else if (finding.status === 'modified') {
-          toothData[finding.tooth] = {
-            surfaces: { O: 'planned' },
-            aiDetected: false,
-            condition: finding.condition
-          };
-        }
-      });
-    });
-    
-    return toothData;
   };
 
   // Render Tooth SVG for Clinical Chart
@@ -1307,7 +892,7 @@ const DentistDashboard = () => {
     };
 
     const teeth = dentitionType === 'adult' ? adultTeeth : childTeeth;
-    const toothData = selectedChartingPatient ? generateToothData(selectedChartingPatient) : {};
+    const toothData: Record<number, { surfaces?: Record<string, string>; status?: string; aiDetected?: boolean; condition?: string }> = {};
 
     return (
       <div className="clinical-odontogram">
@@ -1826,129 +1411,19 @@ const DentistDashboard = () => {
         );
 
       // ============== DENTIST CASE DETAIL ==============
-      case 'case-detail': {
-        if (!reviewingJob) {
-          setActiveView('dentist-patients');
-          return null;
-        }
-
-        const job = reviewingJob;
-        const imageUrl = job.annotated_image_url || job.scan_file_url;
-        const canGenerateDraft = ['queued', 'segmentation_pending', 'report_requested', 'failed'].includes(job.status);
-        const canReview = job.status === 'draft_ready' || job.status === 'dentist_reviewed';
-        const canFinalize = job.status === 'draft_ready' || job.status === 'dentist_reviewed';
-
+      case 'case-detail':
+        if (!reviewingJob) { setActiveView('dentist-patients'); return null; }
         return (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-16)', marginBottom: 'var(--space-24)' }}>
-              <button
-                className="btn btn--outline btn--sm"
-                onClick={() => { setActiveView('dentist-patients'); setReviewingJob(null); }}
-              >
-                <Icon name="chevron-left" /> Back to Patients
-              </button>
-              <div style={{ flex: 1 }}>
-                <h2 style={{ margin: 0 }}>Scan #{job.ct_scan_id}</h2>
-                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                  Uploaded {formatDate(job.created_at)} · {job.patient_name || 'Unknown Patient'}
-                </div>
-              </div>
-              <span className={`status-badge ${getBackendJobStatusClass(job.status)}`} style={{ fontSize: 'var(--font-size-sm)', padding: '6px 14px' }}>
-                {getBackendJobStatusLabel(job.status)}
-              </span>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-24)', alignItems: 'start' }}>
-              <div className="card" style={{ padding: 'var(--space-20)' }}>
-                <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-16)' }}>
-                  Scan Viewer
-                </h3>
-                {imageUrl ? (
-                  <AuthenticatedScanImage
-                    src={imageUrl}
-                    alt="Dental Scan"
-                    style={{ width: '100%', borderRadius: 'var(--radius-md)', display: 'block', background: '#000' }}
-                  />
-                ) : (
-                  <div style={{ width: '100%', aspectRatio: '1', background: '#0F172A', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 'var(--space-12)' }}>
-                    <Icon name="activity" />
-                    <div style={{ fontSize: 'var(--font-size-sm)', textAlign: 'center', maxWidth: '220px', lineHeight: 1.5 }}>
-                      Scan image will appear here once it has been processed.
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-16)' }}>
-                <div className="card" style={{ padding: 'var(--space-20)' }}>
-                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
-                    AI Draft Report
-                  </h3>
-                  {job.draft_report ? (
-                    <div style={{ fontSize: 'var(--font-size-sm)', lineHeight: '1.8', color: 'var(--color-text)', whiteSpace: 'pre-wrap', background: 'var(--color-bg-1)', borderRadius: 'var(--radius-md)', padding: 'var(--space-14)', maxHeight: '260px', overflowY: 'auto' }}>
-                      {job.draft_report}
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>
-                      Draft report not available yet.
-                    </p>
-                  )}
-                </div>
-
-                <div className="card" style={{ padding: 'var(--space-20)' }}>
-                  <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-semibold)', marginBottom: 'var(--space-12)' }}>
-                    Dentist Notes
-                  </h3>
-                  <textarea
-                    value={reviewNotes}
-                    onChange={(e) => setReviewNotes(e.target.value)}
-                    placeholder="Add your notes before sending to the patient..."
-                    style={{
-                      width: '100%',
-                      minHeight: '140px',
-                      padding: 'var(--space-12)',
-                      borderRadius: 'var(--radius-md)',
-                      border: '1px solid var(--color-border)',
-                      fontSize: 'var(--font-size-base)',
-                      resize: 'vertical'
-                    }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', gap: 'var(--space-12)', flexWrap: 'wrap' }}>
-                  {canGenerateDraft && (
-                    <button
-                      className="btn btn--outline"
-                      onClick={() => void handleGenerateDraftForJob(job)}
-                      disabled={jobActionLoading}
-                    >
-                      <Icon name="activity" /> Generate Draft
-                    </button>
-                  )}
-                  {canReview && (
-                    <button
-                      className="btn btn--outline"
-                      onClick={() => void handleReviewJobAction('reviewed')}
-                      disabled={jobActionLoading}
-                    >
-                      <Icon name="check-circle" /> Mark Reviewed
-                    </button>
-                  )}
-                  {canFinalize && (
-                    <button
-                      className="btn btn--primary"
-                      onClick={() => void handleReviewJobAction('finalized')}
-                      disabled={jobActionLoading}
-                    >
-                      <Icon name="send" /> Finalize & Send
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </>
+          <DentistCaseDetailView
+            job={reviewingJob}
+            reviewNotes={reviewNotes}
+            onNotesChange={setReviewNotes}
+            onBack={() => { setActiveView('dentist-patients'); setReviewingJob(null); }}
+            onGenerateDraft={handleGenerateDraftForJob}
+            onReview={handleReviewJobAction}
+            loading={jobActionLoading}
+          />
         );
-      }
 
       // ============== DENTIST PENDING REQUESTS ==============
       case 'dentist-pending':
@@ -2278,16 +1753,8 @@ const DentistDashboard = () => {
       // ============== CLINICAL CHARTING ==============
       case 'dentist-charting': {
         const chartingPatient = chartingPatients.find(p => p.patient_user_id === selectedChartingPatient);
-        const chartDataAvailable = false;
-        const patientToothData = selectedChartingPatient && chartDataAvailable
-          ? generateToothData(selectedChartingPatient)
-          : {};
-        const patientConditions = selectedChartingPatient && chartDataAvailable
-          ? dentistCases
-              .filter(c => c.patientId === selectedChartingPatient)
-              .flatMap(c => [...c.aiFindings.map(f => ({ tooth: f.tooth, condition: f.condition, source: 'AI' as const })),
-                            ...c.finalFindings.filter(f => f.status !== 'rejected').map(f => ({ tooth: f.tooth, condition: f.condition, source: 'Dentist' as const }))])
-          : [];
+        const patientToothData: Record<number, { surfaces?: Record<string, string>; status?: string; aiDetected?: boolean; condition?: string }> = {};
+        const patientConditions: { tooth: number; condition: string; source: 'AI' | 'Dentist' }[] = [];
         
         return (
           <>
@@ -2536,19 +2003,6 @@ const DentistDashboard = () => {
       }}
     >
       {renderContent()}
-      
-      {/* Case Review Modal */}
-      {showReviewModal && selectedCase && (
-        <CaseReviewModal
-          caseData={selectedCase}
-          onClose={() => {
-            setShowReviewModal(false);
-            setSelectedCase(null);
-          }}
-          onMarkReviewed={handleMarkReviewed}
-          onSendToPatient={handleSendToPatient}
-        />
-      )}
 
       {/* Appointment Scheduler Modal */}
       {showScheduler && (
