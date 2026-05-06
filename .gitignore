@@ -36,3 +36,8 @@ front-end/node_modules/
 
 # Environment variables
 .env
+
+# Claude Code / agent skills (local only, do not push)
+.claude/
+.agents/
+skills-lock.json

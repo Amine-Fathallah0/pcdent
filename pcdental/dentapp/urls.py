@@ -30,6 +30,9 @@ urlpatterns = [
     path('jobs/<uuid:job_id>/annotated/', views.AIProcessingJobAnnotatedImageView.as_view(), name='job-annotated'),
     path('jobs/<uuid:job_id>/mask/', views.AIProcessingJobMaskImageView.as_view(), name='job-mask'),
     path('jobs/<uuid:job_id>/review/', views.AIProcessingJobReviewView.as_view(), name='job-review'),
+    path('conversations/', views.ConversationListView.as_view(), name='conversations'),
+    path('conversations/<int:pk>/messages/', views.ConversationMessagesView.as_view(), name='conversation-messages'),
+    path('conversations/<int:pk>/read/', views.ConversationReadView.as_view(), name='conversation-read'),
     # DentalReport endpoints
     path('dental-reports/', views.DentalReportListView.as_view(), name='dental-report-list'),
     path('dental-reports/<int:pk>/', views.DentalReportDetailView.as_view(), name='dental-report-detail'),

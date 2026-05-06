@@ -15,7 +15,7 @@ patient_info = {
     "dentist": "Dr. Hanen Balti",
 }
 
-gen = DentalReportGenerator(api_key="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")
+gen = DentalReportGenerator(api_key="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")
 report = gen.generate(detections, patient_info)
 print(report.text)
 report.save_txt("report_patient_42.txt")

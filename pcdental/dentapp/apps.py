@@ -5,4 +5,4 @@ class DentappConfig(AppConfig):
     name = 'dentapp'
 
     def ready(self):
-        import dentapp.signals  # noqa: F401  registers post_save handlers
+        from . import signals  # noqa: F401

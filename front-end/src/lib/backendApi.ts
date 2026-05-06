@@ -225,3 +225,48 @@ export const reviewJob = async (
   });
   return response.data;
 };
+
+export interface ConversationDto {
+  id: number;
+  dentist_patient_link: number;
+  other_user_id: string;
+  other_user_name: string;
+  other_user_role: 'dentist' | 'patient';
+  last_message: string;
+  last_message_at: string | null;
+  unread_count: number;
+  created_at: string;
+}
+
+export interface MessageDto {
+  id: number;
+  conversation: number;
+  sender_id: string | null;
+  sender_name: string;
+  content: string;
+  is_system: boolean;
+  is_read: boolean;
+  created_at: string;
+}
+
+export const fetchConversations = async (): Promise<ConversationDto[]> => {
+  const response = await api.get<ConversationDto[]>('conversations/');
+  return response.data;
+};
+
+export const fetchConversationMessages = async (conversationId: number): Promise<MessageDto[]> => {
+  const response = await api.get<MessageDto[]>(`conversations/${conversationId}/messages/`);
+  return response.data;
+};
+
+export const sendConversationMessage = async (
+  conversationId: number,
+  content: string,
+): Promise<MessageDto> => {
+  const response = await api.post<MessageDto>(`conversations/${conversationId}/messages/`, { content });
+  return response.data;
+};
+
+export const markConversationRead = async (conversationId: number): Promise<void> => {
+  await api.post(`conversations/${conversationId}/read/`);
+};

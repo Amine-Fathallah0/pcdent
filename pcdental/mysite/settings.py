@@ -75,6 +75,7 @@ if not ALLOWED_HOSTS:
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -82,6 +83,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'corsheaders',
+    'channels',
     'dentapp',
     'rest_framework',
     'rest_framework_simplejwt.token_blacklist',
@@ -154,6 +156,16 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'mysite.wsgi.application'
+ASGI_APPLICATION = 'mysite.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [(get_env('REDIS_HOST', '127.0.0.1'), int(get_env('REDIS_PORT', '6379')))],
+        },
+    },
+}
 
 
 # Database
