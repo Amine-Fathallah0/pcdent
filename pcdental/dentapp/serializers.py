@@ -1,7 +1,22 @@
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
-from .models import AIProcessingJob, Appointment, Conversation, CTScan, Dentist, DentistPatientLink, Message, Patient, User,AnnotatedScan, DentalReport
+from .models import (
+    AIProcessingJob,
+    AnnotatedScan,
+    Appointment,
+    Conversation,
+    CTScan,
+    DentalReport,
+    Dentist,
+    DentistAvailabilityOverride,
+    DentistPatientLink,
+    DentistSchedule,
+    Message,
+    Notification,
+    Patient,
+    User,
+)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -28,9 +43,22 @@ class DentistSerializer(serializers.ModelSerializer):
 
 
 class DentistPatientLinkSerializer(serializers.ModelSerializer):
+    dentist_name = serializers.CharField(source='dentist.dentist.full_name', read_only=True)
+    patient_name = serializers.CharField(source='patient.patient.full_name', read_only=True)
+
     class Meta:
         model = DentistPatientLink
-        fields = ["id", "dentist", "patient", "connection_code", "is_active", "connected_at", "deactivated_at"]
+        fields = [
+            "id",
+            "dentist",
+            "patient",
+            "dentist_name",
+            "patient_name",
+            "connection_code",
+            "is_active",
+            "connected_at",
+            "deactivated_at",
+        ]
         read_only_fields = ["connection_code", "connected_at"]
 
 
@@ -59,11 +87,56 @@ class ActivePatientSerializer(serializers.ModelSerializer):
 class AppointmentSerializer(serializers.ModelSerializer):
     patient = PatientSerializer(read_only=True)
     dentist = DentistSerializer(read_only=True)
+    last_proposed_by = serializers.SerializerMethodField()
+    cancelled_by = serializers.SerializerMethodField()
 
     class Meta:
         model = Appointment
-        fields = ["id", "dentist_patient_link", "patient", "dentist", "appointment_date", "status", "appointment_type", "duration", "notes", "created_at", "updated_at"]
-        read_only_fields = ["created_at", "updated_at", "patient", "dentist"]
+        fields = [
+            "id",
+            "dentist_patient_link",
+            "patient",
+            "dentist",
+            "appointment_date",
+            "status",
+            "appointment_type",
+            "duration",
+            "notes",
+            "proposal_note",
+            "counter_proposal_count",
+            "last_proposed_by",
+            "cancelled_by",
+            "cancellation_reason",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "created_at",
+            "updated_at",
+            "patient",
+            "dentist",
+            "status",
+            "counter_proposal_count",
+            "last_proposed_by",
+            "cancelled_by",
+            "cancellation_reason",
+        ]
+
+    def get_last_proposed_by(self, obj):
+        if not obj.last_proposed_by:
+            return None
+        return {
+            "user_id": str(obj.last_proposed_by.user_id),
+            "full_name": obj.last_proposed_by.full_name,
+        }
+
+    def get_cancelled_by(self, obj):
+        if not obj.cancelled_by:
+            return None
+        return {
+            "user_id": str(obj.cancelled_by.user_id),
+            "full_name": obj.cancelled_by.full_name,
+        }
 
     def validate_appointment_date(self, value):
         if value < timezone.now():
@@ -388,3 +461,78 @@ class AnnotatedScanSerializer(serializers.ModelSerializer):
         model = AnnotatedScan
         fields = ['id', 'ct_scan', 'image_url', 'image_format', 'created_at']
         read_only_fields = fields
+
+
+# ─── Scheduling: weekly schedule + date overrides ────────────────────────────
+
+class DentistScheduleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DentistSchedule
+        fields = ['id', 'weekday', 'start_time', 'end_time']
+
+    def validate(self, attrs):
+        if attrs['start_time'] >= attrs['end_time']:
+            raise serializers.ValidationError('start_time must be before end_time.')
+        return attrs
+
+
+class DentistAvailabilityOverrideSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DentistAvailabilityOverride
+        fields = ['id', 'date', 'start_time', 'end_time', 'is_blocked', 'reason']
+
+    def validate(self, attrs):
+        is_blocked = attrs.get('is_blocked', False)
+        start_time = attrs.get('start_time')
+        end_time = attrs.get('end_time')
+        if not is_blocked:
+            if start_time is None or end_time is None:
+                raise serializers.ValidationError(
+                    'start_time and end_time are required when is_blocked is False.'
+                )
+            if start_time >= end_time:
+                raise serializers.ValidationError('start_time must be before end_time.')
+        return attrs
+
+
+# ─── Notifications ───────────────────────────────────────────────────────────
+
+class NotificationSerializer(serializers.ModelSerializer):
+    appointment_summary = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notification
+        fields = [
+            'id',
+            'notification_type',
+            'related_appointment',
+            'appointment_summary',
+            'is_read',
+            'created_at',
+            'read_at',
+        ]
+        read_only_fields = fields
+
+    def get_appointment_summary(self, obj):
+        appt = obj.related_appointment
+        if not appt:
+            return None
+        cancelled_by_role = None
+        cancelled_by_name = None
+        if appt.cancelled_by:
+            if appt.cancelled_by_id == appt.dentist.dentist.user_id:
+                cancelled_by_role = 'dentist'
+            elif appt.cancelled_by_id == appt.patient.patient.user_id:
+                cancelled_by_role = 'patient'
+            cancelled_by_name = appt.cancelled_by.full_name
+        return {
+            'id': appt.id,
+            'appointment_date': appt.appointment_date.isoformat(),
+            'duration': appt.duration,
+            'appointment_type': appt.appointment_type,
+            'status': appt.status,
+            'dentist_name': appt.dentist.dentist.full_name,
+            'patient_name': appt.patient.patient.full_name,
+            'cancelled_by_role': cancelled_by_role,
+            'cancelled_by_name': cancelled_by_name,
+        }

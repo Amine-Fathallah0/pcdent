@@ -458,7 +458,7 @@ export const database = {
       time: '14:00',
       duration: 60,
       type: 'treatment' as const,
-      status: 'scheduled' as const,
+      status: 'confirmed' as const,
       notes: 'Root canal treatment - Tooth 36',
       createdAt: '2026-01-22T14:00:00'
     },
@@ -709,7 +709,7 @@ export const database = {
           code: 'D3310',
           description: 'Root Canal Therapy - Molar',
           priority: 'urgent' as const,
-          status: 'scheduled' as const,
+          status: 'confirmed' as const,
           estimatedCost: 1000,
           insuranceCoverage: 600,
           scheduledDate: '2026-02-10',
@@ -898,7 +898,7 @@ export const getUpcomingAppointments = (userId: string, role: 'patient' | 'denti
   return database.appointments
     .filter(a => {
       const isUser = role === 'patient' ? a.patientId === userId : a.dentistId === userId;
-      return isUser && a.date >= today && (a.status === 'scheduled' || a.status === 'confirmed');
+      return isUser && a.date >= today && (a.status === 'pending_dentist' || a.status === 'pending_patient' || a.status === 'confirmed');
     })
     .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
 };
@@ -990,7 +990,8 @@ export const getAppointmentTypeLabel = (type: string): string => {
 
 export const getAppointmentStatusClass = (status: Appointment['status']): string => {
   const classes: Record<Appointment['status'], string> = {
-    'scheduled': 'status-pending',
+    'pending_dentist': 'status-pending',
+    'pending_patient': 'status-pending',
     'confirmed': 'status-confirmed',
     'completed': 'status-completed',
     'cancelled': 'status-cancelled',

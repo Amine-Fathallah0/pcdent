@@ -6,6 +6,7 @@ import ReminderCenter, { type ReminderEntry } from '../notifications/ReminderCen
 import api from '../../lib/api';
 import ThemeToggle from '../auth/ThemeToggle';
 import { useAuth } from '../../context/AuthContext';
+import type { NotificationDto } from '../../lib/backendApi';
 
 interface DashboardLayoutProps {
   role: 'patient' | 'dentist' | 'admin';
@@ -17,6 +18,7 @@ interface DashboardLayoutProps {
   reminderItems?: ReminderEntry[];
   badges?: Record<string, number>;
   onProfileClick?: () => void;
+  onNotification?: (notification: NotificationDto) => void;
 }
 
 const DashboardLayout = ({
@@ -29,6 +31,7 @@ const DashboardLayout = ({
   reminderItems = [],
   badges = {},
   onProfileClick,
+  onNotification,
 }: DashboardLayoutProps) => {
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -194,7 +197,12 @@ const DashboardLayout = ({
           <div className="dashboard-topbar__right">
             {userId && (
               <div className="topbar-alerts">
-                <NotificationCenter userId={userId} onNavigate={onViewChange} />
+                <NotificationCenter
+                  userId={userId}
+                  userRole={role}
+                  onNavigate={onViewChange}
+                  onNotification={onNotification}
+                />
                 {role === 'patient' && (
                   <ReminderCenter reminders={reminderItems} onNavigate={onViewChange} />
                 )}

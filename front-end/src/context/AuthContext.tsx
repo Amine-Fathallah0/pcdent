@@ -84,16 +84,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const login = useCallback(async (usernameOrEmail: string, password: string): Promise<boolean> => {
     try {
       const { data } = await api.post('login/', { username: usernameOrEmail, password });
-      const { access, refresh, user_id, full_name, is_dentist } = data;
+      const { access, refresh, user_id, full_name, is_dentist, is_admin } = data;
 
+      const role: UserRole = is_admin ? 'admin' : is_dentist ? 'dentist' : 'patient';
       localStorage.setItem('access_token', access);
       localStorage.setItem('refresh_token', refresh);
       localStorage.setItem('token', access);
       localStorage.setItem('user_id', user_id);
       localStorage.setItem('full_name', full_name);
-      localStorage.setItem('user_role', is_dentist ? 'dentist' : 'patient');
-
-      const role: UserRole = is_dentist ? 'dentist' : 'patient';
+      localStorage.setItem('user_role', role);
       setUser({ id: user_id, name: full_name, email: usernameOrEmail, role });
       return true;
     } catch {

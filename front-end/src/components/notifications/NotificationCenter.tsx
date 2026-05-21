@@ -1,15 +1,18 @@
 import { useState, useEffect, useRef, type JSX } from 'react';
 import {
-  getNotificationsByUser,
-  getUnreadNotificationCount,
-  markNotificationAsRead,
-  markAllNotificationsAsRead,
-  type NotificationItem
-} from '../../data/database';
+  fetchNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  type NotificationDto,
+} from '../../lib/backendApi';
+import { parseBackendDateTime } from '../../lib/dateTime';
+import { useChatSocket, type ChatSocketEvent } from '../../hooks/useChatSocket';
 
 interface NotificationCenterProps {
-  userId: string;
+  userId?: string;
+  userRole?: 'patient' | 'dentist' | 'admin';
   onNavigate?: (viewId: string) => void;
+  onNotification?: (notification: NotificationDto) => void;
 }
 
 // Icons
@@ -66,17 +69,14 @@ const icons: Record<string, JSX.Element> = {
   )
 };
 
-const getTypeIcon = (type: NotificationItem['type']) => {
+const getTypeIcon = (type: 'appointment' | 'system') => {
   return icons[type] || icons.system;
 };
 
-const getTypeColor = (type: NotificationItem['type']): string => {
-  const colors: Record<NotificationItem['type'], string> = {
+const getTypeColor = (type: 'appointment' | 'system'): string => {
+  const colors: Record<'appointment' | 'system', string> = {
     appointment: '#2563EB',
-    case: '#7C3AED',
-    message: '#10B981',
     system: '#6B7280',
-    reminder: '#F59E0B'
   };
   return colors[type];
 };
@@ -96,13 +96,87 @@ const getRelativeTime = (dateString: string): string => {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-const NotificationCenter = ({ userId, onNavigate }: NotificationCenterProps) => {
+const formatAppointmentMeta = (notification: NotificationDto) => {
+  const summary = notification.appointment_summary;
+  if (!summary) return '';
+  const date = parseBackendDateTime(summary.appointment_date);
+  const dateLabel = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const timeLabel = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${dateLabel} at ${timeLabel} · ${summary.duration}m`;
+};
+
+const describeNotification = (notification: NotificationDto) => {
+  const summary = notification.appointment_summary;
+  switch (notification.notification_type) {
+    case 'appointment_requested':
+      return {
+        title: 'New appointment request',
+        message: summary
+          ? `${summary.patient_name} requested ${summary.appointment_type || 'an appointment'} · ${formatAppointmentMeta(notification)}`
+          : 'A patient requested a new appointment.',
+      };
+    case 'appointment_counter_proposed':
+      return {
+        title: 'Counter proposal received',
+        message: summary
+          ? `New proposed time for ${summary.appointment_type || 'appointment'} · ${formatAppointmentMeta(notification)}`
+          : 'A new appointment time was proposed.',
+      };
+    case 'appointment_accepted':
+      return {
+        title: 'Appointment confirmed',
+        message: summary
+          ? `${summary.appointment_type || 'Appointment'} confirmed · ${formatAppointmentMeta(notification)}`
+          : 'An appointment was confirmed.',
+      };
+    case 'appointment_declined':
+      return {
+        title: 'Appointment declined',
+        message: summary
+          ? `${summary.appointment_type || 'Appointment'} was declined.`
+          : 'An appointment request was declined.',
+      };
+    case 'appointment_cancelled':
+      return {
+        title: 'Appointment cancelled',
+        message: summary
+          ? `${summary.cancelled_by_role === 'patient' ? 'Patient' : summary.cancelled_by_role === 'dentist' ? 'Dentist' : 'Someone'} cancelled ${summary.appointment_type || 'the appointment'}.`
+          : 'An appointment was cancelled.',
+      };
+    case 'appointment_modified':
+      return {
+        title: 'Appointment updated',
+        message: summary
+          ? `Details changed · ${formatAppointmentMeta(notification)}`
+          : 'An appointment was updated.',
+      };
+    default:
+      return { title: 'Notification', message: 'You have a new update.' };
+  }
+};
+
+const NotificationCenter = ({ userId, userRole = 'patient', onNavigate, onNotification }: NotificationCenterProps) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [notifications, setNotifications] = useState<NotificationDto[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const refreshCounts = (items: NotificationDto[]) => {
+    setUnreadCount(items.filter((n) => !n.is_read).length);
+  };
+
+  const loadNotifications = () => {
+    fetchNotifications().then((items) => {
+      setNotifications(items);
+      refreshCounts(items);
+    }).catch(() => {
+      setNotifications([]);
+      setUnreadCount(0);
+    });
+  };
+
   useEffect(() => {
+    if (!userId) return;
     loadNotifications();
   }, [userId]);
 
@@ -117,27 +191,50 @@ const NotificationCenter = ({ userId, onNavigate }: NotificationCenterProps) => 
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const loadNotifications = () => {
-    const notifs = getNotificationsByUser(userId);
-    setNotifications(notifs);
-    setUnreadCount(getUnreadNotificationCount(userId));
-  };
-
-  const handleNotificationClick = (notification: NotificationItem) => {
-    if (!notification.read) {
-      markNotificationAsRead(notification.id);
-      loadNotifications();
+  const handleNotificationClick = async (notification: NotificationDto) => {
+    if (!notification.is_read) {
+      try {
+        const updated = await markNotificationRead(notification.id);
+        setNotifications((prev) => {
+          const next = prev.map((item) => (item.id === updated.id ? updated : item));
+          refreshCounts(next);
+          return next;
+        });
+      } catch {
+        // ignore
+      }
     }
-    if (notification.actionUrl && onNavigate) {
-      onNavigate(notification.actionUrl);
+
+    if (notification.appointment_summary && onNavigate) {
+      const viewId = userRole === 'dentist' ? 'dentist-appointments' : 'patient-appointments';
+      onNavigate(viewId);
     }
     setIsOpen(false);
   };
 
-  const handleMarkAllAsRead = () => {
-    markAllNotificationsAsRead(userId);
-    loadNotifications();
+  const handleMarkAllAsRead = async () => {
+    try {
+      await markAllNotificationsRead();
+      setNotifications((prev) => prev.map((item) => ({ ...item, is_read: true, read_at: item.read_at ?? new Date().toISOString() })));
+      setUnreadCount(0);
+    } catch {
+      // ignore
+    }
   };
+
+  useChatSocket({
+    enabled: Boolean(userId),
+    onEvent: (event: ChatSocketEvent) => {
+      if (event.type !== 'notification.new') return;
+      onNotification?.(event.notification);
+      setNotifications((prev) => {
+        const exists = prev.some((item) => item.id === event.notification.id);
+        const next = exists ? prev : [event.notification, ...prev];
+        refreshCounts(next);
+        return next;
+      });
+    },
+  });
 
   return (
     <div className={`notification-center ${isOpen ? 'is-open' : ''}`} ref={dropdownRef}>
@@ -171,26 +268,32 @@ const NotificationCenter = ({ userId, onNavigate }: NotificationCenterProps) => 
                 <p>No notifications yet</p>
               </div>
             ) : (
-              notifications.map(notification => (
+              notifications.map(notification => {
+                const content = describeNotification(notification);
+                const type: 'appointment' | 'system' = notification.notification_type.startsWith('appointment_')
+                  ? 'appointment'
+                  : 'system';
+                return (
                 <div
                   key={notification.id}
-                  className={`notification-item ${notification.read ? 'read' : 'unread'}`}
+                  className={`notification-item ${notification.is_read ? 'read' : 'unread'}`}
                   onClick={() => handleNotificationClick(notification)}
                 >
                   <div
                     className="notification-icon"
-                    style={{ backgroundColor: `${getTypeColor(notification.type)}20`, color: getTypeColor(notification.type) }}
+                    style={{ backgroundColor: `${getTypeColor(type)}20`, color: getTypeColor(type) }}
                   >
-                    {getTypeIcon(notification.type)}
+                    {getTypeIcon(type)}
                   </div>
                   <div className="notification-content">
-                    <div className="notification-title">{notification.title}</div>
-                    <div className="notification-message">{notification.message}</div>
-                    <div className="notification-time">{getRelativeTime(notification.createdAt)}</div>
+                    <div className="notification-title">{content.title}</div>
+                    <div className="notification-message">{content.message}</div>
+                    <div className="notification-time">{getRelativeTime(notification.created_at)}</div>
                   </div>
-                  {!notification.read && <div className="unread-dot" />}
+                  {!notification.is_read && <div className="unread-dot" />}
                 </div>
-              ))
+              );
+            })
             )}
           </div>
         </div>

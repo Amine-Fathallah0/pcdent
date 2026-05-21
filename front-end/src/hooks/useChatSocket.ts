@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 
+import type { NotificationDto } from '../lib/backendApi';
+
 export type ChatSocketEvent =
   | {
       type: 'message.new';
@@ -19,6 +21,10 @@ export type ChatSocketEvent =
       type: 'conversation.read';
       conversation_id: number;
       reader_id: string;
+    }
+  | {
+      type: 'notification.new';
+      notification: NotificationDto;
     };
 
 interface Options {

@@ -1862,9 +1862,7 @@ button,
                 overflow 0ms 240ms;
 }
 
-.sidebar--open,
-.sidebar:hover,
-.sidebar:focus-within {
+.sidebar--open {
     width: var(--sidebar-expanded-width);
     padding: var(--space-16);
     padding-bottom: 136px;
@@ -1896,9 +1894,7 @@ button,
     gap: 0;
 }
 
-.sidebar--open .sidebar-brand,
-.sidebar:hover .sidebar-brand,
-.sidebar:focus-within .sidebar-brand {
+.sidebar--open .sidebar-brand {
     justify-content: flex-start;
 }
 
@@ -1950,17 +1946,13 @@ button,
     transition: opacity 130ms ease, max-width 170ms ease, transform 170ms ease;
 }
 
-.sidebar--open .sidebar-brand__text,
-.sidebar:hover .sidebar-brand__text,
-.sidebar:focus-within .sidebar-brand__text {
+.sidebar--open .sidebar-brand__text {
     opacity: 1;
     max-width: 240px;
     transform: translateX(0);
 }
 
-.sidebar--open .sidebar-brand__icon,
-.sidebar:hover .sidebar-brand__icon,
-.sidebar:focus-within .sidebar-brand__icon {
+.sidebar--open .sidebar-brand__icon {
     opacity: 0;
     max-width: 0;
     transform: translateX(-6px);
@@ -2101,18 +2093,14 @@ button,
     pointer-events: none;
 }
 
-.sidebar--open .sidebar-link__label,
-.sidebar:hover .sidebar-link__label,
-.sidebar:focus-within .sidebar-link__label {
+.sidebar--open .sidebar-link__label {
     opacity: 1;
     max-width: 200px;
     transform: translateX(0);
     pointer-events: auto;
 }
 
-.sidebar--open .sidebar-link,
-.sidebar:hover .sidebar-link,
-.sidebar:focus-within .sidebar-link {
+.sidebar--open .sidebar-link {
     width: 100%;
     margin: 0;
     padding: 10px 12px;
@@ -2168,9 +2156,7 @@ button,
                 right 240ms var(--ease-standard);
 }
 
-.sidebar--open .sidebar-footer,
-.sidebar:hover .sidebar-footer,
-.sidebar:focus-within .sidebar-footer {
+.sidebar--open .sidebar-footer {
     max-height: 120px;
     left: var(--space-16);
     right: var(--space-16);
@@ -2178,6 +2164,7 @@ button,
 }
 
 .sidebar-footer .btn {
+    display: none;
     opacity: 0;
     max-width: 0;
     overflow: hidden;
@@ -2186,9 +2173,8 @@ button,
     transition: opacity 130ms ease, max-width 170ms ease, transform 170ms ease;
 }
 
-.sidebar--open .sidebar-footer .btn,
-.sidebar:hover .sidebar-footer .btn,
-.sidebar:focus-within .sidebar-footer .btn {
+.sidebar--open .sidebar-footer .btn {
+    display: inline-flex;
     opacity: 1;
     max-width: 220px;
     pointer-events: auto;

@@ -85,7 +85,7 @@ export interface Appointment {
   time: string;
   duration: number; // in minutes
   type: string;
-  status: 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no-show';
+  status: 'pending_dentist' | 'pending_patient' | 'confirmed' | 'completed' | 'cancelled' | 'no-show';
   notes: string | null;
   createdAt: string;
 }

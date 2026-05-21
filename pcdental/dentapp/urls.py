@@ -22,6 +22,19 @@ urlpatterns = [
     path('appointments/', views.AppointmentListCreateView.as_view(), name='appointments'),
     path('appointments/type-suggestions/', views.AppointmentTypeSuggestionsView.as_view(), name='appointment-type-suggestions'),
     path('appointments/<int:pk>/', views.AppointmentDetailView.as_view(), name='appointment-detail'),
+    path('appointments/<int:pk>/counter-propose/', views.AppointmentCounterProposeView.as_view(), name='appointment-counter-propose'),
+    path('appointments/<int:pk>/accept/', views.AppointmentAcceptView.as_view(), name='appointment-accept'),
+    path('appointments/<int:pk>/decline/', views.AppointmentDeclineView.as_view(), name='appointment-decline'),
+    path('appointments/<int:pk>/cancel/', views.AppointmentCancelView.as_view(), name='appointment-cancel'),
+    path('appointments/<int:pk>/complete/', views.AppointmentCompleteView.as_view(), name='appointment-complete'),
+    path('appointments/<int:pk>/mark-no-show/', views.AppointmentNoShowView.as_view(), name='appointment-no-show'),
+    path('dentists/me/schedule/', views.DentistScheduleView.as_view(), name='dentist-schedule'),
+    path('dentists/me/overrides/', views.DentistAvailabilityOverrideListCreateView.as_view(), name='dentist-overrides'),
+    path('dentists/me/overrides/<int:pk>/', views.DentistAvailabilityOverrideDetailView.as_view(), name='dentist-override-detail'),
+    path('dentists/<uuid:dentist_id>/available-slots/', views.DentistAvailableSlotsView.as_view(), name='dentist-available-slots'),
+    path('notifications/', views.NotificationListView.as_view(), name='notifications'),
+    path('notifications/<int:pk>/read/', views.NotificationReadView.as_view(), name='notification-read'),
+    path('notifications/read-all/', views.NotificationReadAllView.as_view(), name='notifications-read-all'),
     path('ct-scans/', views.CTScanListCreateView.as_view(), name='ct-scans'),
     path('ct-scans/<int:pk>/file/', views.CTScanFileView.as_view(), name='ct-scan-file'),
     path('jobs/', views.AIProcessingJobListView.as_view(), name='job-list'),
@@ -42,6 +55,12 @@ urlpatterns = [
     # AnnotatedScan endpoints
     path('annotated-scans/', views.AnnotatedScanListView.as_view(), name='annotated-scan-list'),
     path('annotated-scans/<int:pk>/image/', views.AnnotatedScanImageView.as_view(), name='annotated-scan-image'),
+    # Admin endpoints (prefixed with platform-admin/ to avoid conflict with Django's /admin/)
+    path('platform-admin/stats/', views.AdminStatsView.as_view(), name='admin-stats'),
+    path('platform-admin/dentists/', views.AdminDentistListView.as_view(), name='admin-dentists'),
+    path('platform-admin/dentists/<uuid:dentist_id>/verify/', views.AdminVerifyDentistView.as_view(), name='admin-verify-dentist'),
+    path('platform-admin/dentists/<uuid:dentist_id>/suspend/', views.AdminSuspendDentistView.as_view(), name='admin-suspend-dentist'),
+    path('platform-admin/patients/', views.AdminPatientListView.as_view(), name='admin-patients'),
 ]
 
 if apps.is_installed('mcp_server'):

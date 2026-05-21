@@ -5,15 +5,14 @@ import string
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import FileExtensionValidator
 from django.db import IntegrityError
+from django.utils import timezone
 
 # Create your models here.
 class User(AbstractUser):
     user_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     full_name = models.CharField(max_length=255)
     email = models.EmailField(unique=True)
-
-    # Django's AbstractUser already provides: username, email, password, first_name, last_name, etc.
-    # Password hashing is handled automatically by Django
+    is_admin = models.BooleanField(default=False)
 
     USERNAME_FIELD = 'username'
     REQUIRED_FIELDS = ['email', 'full_name']
@@ -55,6 +54,7 @@ class Dentist(models.Model):
     location = models.CharField(max_length=100)
     contact_number = models.CharField(max_length=15)
     dentist_code = models.CharField(max_length=7, unique=True, blank=True)
+    is_verified = models.BooleanField(default=False)
     patients = models.ManyToManyField(Patient, through='DentistPatientLink', related_name='dentists')
 
     # Soft delete support
@@ -118,18 +118,33 @@ class DentistPatientLink(models.Model):
 
 class Appointment(models.Model):
     STATUS_CHOICES = [
-        ('scheduled', 'Scheduled'),
-        ('completed', 'Completed'),
+        ('pending_dentist', 'Pending Dentist'),
+        ('pending_patient', 'Pending Patient'),
+        ('confirmed', 'Confirmed'),
         ('cancelled', 'Cancelled'),
+        ('completed', 'Completed'),
         ('no_show', 'No Show'),
     ]
-    
+
+    NON_CANCELLED_BLOCKING = ('pending_dentist', 'pending_patient', 'confirmed')
+    TERMINAL_STATUSES = ('cancelled', 'completed', 'no_show')
+    MAX_COUNTER_PROPOSALS = 3
+
     dentist_patient_link = models.ForeignKey(DentistPatientLink, on_delete=models.PROTECT)
     appointment_date = models.DateTimeField()
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending_dentist')
     appointment_type = models.TextField(blank=True)
     duration = models.IntegerField(default=30)
     notes = models.TextField(blank=True)
+    proposal_note = models.TextField(blank=True)
+    counter_proposal_count = models.IntegerField(default=0)
+    last_proposed_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='proposed_appointments'
+    )
+    cancelled_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='cancelled_appointments'
+    )
+    cancellation_reason = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
@@ -142,6 +157,10 @@ class Appointment(models.Model):
     def dentist(self):
         return self.dentist_patient_link.dentist
 
+    @property
+    def end_date(self):
+        return self.appointment_date + timezone.timedelta(minutes=self.duration)
+
     class Meta:
         ordering = ['appointment_date']
         indexes = [
@@ -151,6 +170,84 @@ class Appointment(models.Model):
 
     def __str__(self):
         return f"{self.patient.patient.full_name} with Dr. {self.dentist.dentist.full_name} on {self.appointment_date.strftime('%Y-%m-%d %H:%M')}"
+
+
+class DentistSchedule(models.Model):
+    """Recurring weekly working hours for a dentist."""
+    WEEKDAY_CHOICES = [
+        (0, 'Monday'),
+        (1, 'Tuesday'),
+        (2, 'Wednesday'),
+        (3, 'Thursday'),
+        (4, 'Friday'),
+        (5, 'Saturday'),
+        (6, 'Sunday'),
+    ]
+
+    dentist = models.ForeignKey(Dentist, on_delete=models.CASCADE, related_name='schedule_entries')
+    weekday = models.IntegerField(choices=WEEKDAY_CHOICES)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+
+    class Meta:
+        ordering = ['dentist', 'weekday', 'start_time']
+        indexes = [
+            models.Index(fields=['dentist', 'weekday']),
+        ]
+
+    def __str__(self):
+        return f"{self.dentist} {self.get_weekday_display()} {self.start_time}-{self.end_time}"
+
+
+class DentistAvailabilityOverride(models.Model):
+    """One-off date overrides — block a day, or extend hours on a specific date."""
+    dentist = models.ForeignKey(Dentist, on_delete=models.CASCADE, related_name='availability_overrides')
+    date = models.DateField()
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    is_blocked = models.BooleanField(default=False)
+    reason = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ['dentist', 'date', 'start_time']
+        indexes = [
+            models.Index(fields=['dentist', 'date']),
+        ]
+
+    def __str__(self):
+        kind = 'blocked' if self.is_blocked else 'open'
+        return f"{self.dentist} {self.date} ({kind})"
+
+
+class Notification(models.Model):
+    """In-app notification for appointment events. Pushed via WebSocket."""
+    TYPE_CHOICES = [
+        ('appointment_requested', 'Appointment Requested'),
+        ('appointment_counter_proposed', 'Appointment Counter-Proposed'),
+        ('appointment_accepted', 'Appointment Accepted'),
+        ('appointment_declined', 'Appointment Declined'),
+        ('appointment_cancelled', 'Appointment Cancelled'),
+        ('appointment_modified', 'Appointment Modified'),
+    ]
+
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    notification_type = models.CharField(max_length=40, choices=TYPE_CHOICES)
+    related_appointment = models.ForeignKey(
+        Appointment, on_delete=models.CASCADE, null=True, blank=True, related_name='notifications'
+    )
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['recipient', '-created_at']),
+            models.Index(fields=['recipient', 'is_read']),
+        ]
+
+    def __str__(self):
+        return f"Notification[{self.notification_type}] → {self.recipient.full_name}"
 class CTScan(models.Model):
     dentist_patient_link = models.ForeignKey(DentistPatientLink, on_delete=models.PROTECT)
     uploaded_by_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)

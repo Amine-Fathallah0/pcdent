@@ -1,401 +1,486 @@
-import { useState, useEffect, useRef, type JSX } from 'react';
+import { useState, useEffect, useMemo, type JSX } from 'react';
 import {
-  formatTime,
-  formatDate,
-  getDayName,
-  type Appointment
-} from '../../data/database';
-import { fetchAppointmentTypeSuggestions } from '../../lib/backendApi';
+  fetchAppointmentTypeSuggestions,
+  fetchAvailableSlots,
+  fetchMyLinks,
+  type AppointmentDto,
+  type AvailableSlotsResponse,
+  type DentistPatientLinkDto,
+} from '../../lib/backendApi';
 
 interface AppointmentSchedulerProps {
-  userId: string;
   userRole: 'patient' | 'dentist';
-  dentistId?: string;
-  patientId?: string;
   dentistPatients?: Array<{ id: string; name: string; email: string }>;
-  onCreateAppointment?: (payload: {
+  /**
+   * For patients: id of the dentist they want to book with (Dentist PK = User UUID).
+   * For dentists: ignored — the link is selected via patient picker.
+   */
+  defaultDentistId?: string;
+  onCreateAppointment: (payload: {
     dentistPatientLinkId: number;
     appointmentDate: string;
     appointmentType: string;
     duration: number;
     notes: string | null;
-  }) => Promise<Appointment>;
+    proposalNote: string | null;
+    forceOverride: boolean;
+  }) => Promise<AppointmentDto>;
   onClose: () => void;
-  onSuccess: (appointment: Appointment) => void;
+  onSuccess: (appointment: AppointmentDto) => void;
 }
 
-// Icons
 const icons: Record<string, JSX.Element> = {
-  calendar: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-      <line x1="16" y1="2" x2="16" y2="6"/>
-      <line x1="8" y1="2" x2="8" y2="6"/>
-      <line x1="3" y1="10" x2="21" y2="10"/>
-    </svg>
-  ),
-  clock: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10"/>
-      <polyline points="12 6 12 12 16 14"/>
-    </svg>
-  ),
-  user: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-      <circle cx="12" cy="7" r="4"/>
-    </svg>
-  ),
   x: (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="18" y1="6" x2="6" y2="18"/>
       <line x1="6" y1="6" x2="18" y2="18"/>
     </svg>
   ),
-  check: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12"/>
-    </svg>
-  ),
-  stethoscope: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/>
-      <path d="M8 15v1a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6v-4"/>
-      <circle cx="20" cy="10" r="2"/>
-    </svg>
-  ),
-  notes: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-      <polyline points="14 2 14 8 20 8"/>
-      <line x1="16" y1="13" x2="8" y2="13"/>
-      <line x1="16" y1="17" x2="8" y2="17"/>
+  clock: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <polyline points="12 6 12 12 16 14"/>
     </svg>
   ),
   chevronLeft: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="15 18 9 12 15 6"/>
     </svg>
   ),
   chevronRight: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="9 18 15 12 9 6"/>
     </svg>
-  )
+  ),
 };
 
-const timeSlots = [
-  '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
-  '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30'
-];
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MONTH_LABELS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const durations = [
-  { value: 30, label: '30 minutes' },
-  { value: 45, label: '45 minutes' },
+  { value: 30, label: '30 min' },
+  { value: 45, label: '45 min' },
   { value: 60, label: '1 hour' },
-  { value: 90, label: '1.5 hours' }
+  { value: 90, label: '1.5 hours' },
 ];
 
-const AppointmentScheduler = ({ userId: _userId, userRole, dentistPatients = [], onCreateAppointment, onClose, onSuccess }: AppointmentSchedulerProps) => {
-  const [step, setStep] = useState(1);
-  const [selectedDate, setSelectedDate] = useState<string>('');
-  const [selectedTime, setSelectedTime] = useState<string>('');
-  const [appointmentType, setAppointmentType] = useState('');
-  const [selectedDuration, setSelectedDuration] = useState(30);
-  const [notes, setNotes] = useState('');
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const typeInputRef = useRef<HTMLInputElement>(null);
+const formatDayLabel = (date: Date, today: Date) => {
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(date, today)) return 'Today';
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  if (sameDay(date, tomorrow)) return 'Tomorrow';
+  return DAY_LABELS[(date.getDay() + 6) % 7];
+};
 
-  const [selectedPatient, setSelectedPatient] = useState('');
+const toIsoDate = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
 
-  useEffect(() => {
-    fetchAppointmentTypeSuggestions()
-      .then(setSuggestions)
-      .catch(() => setSuggestions([]));
+const formatDisplayTime = (hhmm: string) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 || 12;
+  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+};
+
+const VISIBLE_DAYS = 7;
+const INITIAL_SLOTS_VISIBLE = 14;
+
+const AppointmentScheduler = ({
+  userRole,
+  dentistPatients = [],
+  defaultDentistId,
+  onCreateAppointment,
+  onClose,
+  onSuccess,
+}: AppointmentSchedulerProps) => {
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
   }, []);
 
-  const filteredSuggestions = suggestions.filter(s =>
-    s.toLowerCase().includes(appointmentType.toLowerCase()) && s !== appointmentType
-  );
+  const [windowStart, setWindowStart] = useState<Date>(today);
+  const [selectedDateIso, setSelectedDateIso] = useState<string>(toIsoDate(today));
+  const [selectedTime, setSelectedTime] = useState<string>('');
+  const [duration, setDuration] = useState<number>(30);
 
-  const generateCalendarDays = () => {
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const startPadding = firstDay.getDay();
-    const days: (Date | null)[] = [];
+  const [appointmentType, setAppointmentType] = useState('');
+  const [proposalNote, setProposalNote] = useState('');
+  const [notes, setNotes] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showAllSlots, setShowAllSlots] = useState(false);
 
-    for (let i = 0; i < startPadding; i++) {
-      days.push(null);
+  const [selectedPatientLinkId, setSelectedPatientLinkId] = useState<string>('');
+  const [resolvedDentistLink, setResolvedDentistLink] = useState<DentistPatientLinkDto | null>(null);
+  const [patientLinks, setPatientLinks] = useState<DentistPatientLinkDto[]>([]);
+  const [selectedDentistLinkId, setSelectedDentistLinkId] = useState<string>('');
+
+  const [slotsResponse, setSlotsResponse] = useState<AvailableSlotsResponse | null>(null);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsError, setSlotsError] = useState<string | null>(null);
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const formatDentistLabel = (link: DentistPatientLinkDto, idx: number) => {
+    if (link.dentist_name) {
+      return link.dentist_name;
     }
-    for (let i = 1; i <= lastDay.getDate(); i++) {
-      days.push(new Date(year, month, i));
-    }
-    return days;
+    const tail = link.dentist ? link.dentist.slice(-6) : String(link.id);
+    return `Dentist ${idx + 1} · ${tail}`;
   };
 
-  const isDateDisabled = (date: Date): boolean => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const day = date.getDay();
-    return date < today || day === 0 || day === 6;
-  };
+  // Appointment type suggestions (dentist only — patients leave blank)
+  useEffect(() => {
+    if (userRole !== 'dentist') return;
+    fetchAppointmentTypeSuggestions().then(setSuggestions).catch(() => setSuggestions([]));
+  }, [userRole]);
 
-  const handleDateSelect = (date: Date) => {
-    if (!isDateDisabled(date)) {
-      setSelectedDate(date.toISOString().split('T')[0]);
-    }
-  };
+  // Resolve patient → dentist link (the patient must be linked to the chosen dentist)
+  useEffect(() => {
+    if (userRole !== 'patient') return;
+    fetchMyLinks().then((links) => {
+      const active = links.filter((l) => l.is_active);
+      setPatientLinks(active);
+      const match = defaultDentistId
+        ? active.find((l) => l.dentist === defaultDentistId)
+        : active[0];
+      setResolvedDentistLink(match ?? null);
+      setSelectedDentistLinkId(match ? String(match.id) : '');
+    }).catch(() => setResolvedDentistLink(null));
+  }, [userRole, defaultDentistId]);
 
-  const handleSubmit = async () => {
-    if (!selectedDate || !selectedTime || (userRole === 'dentist' && !selectedPatient)) return;
+  // Determine the dentist id for the slot query
+  const dentistIdForSlots: string | null = userRole === 'patient'
+    ? (resolvedDentistLink?.dentist ?? null)
+    : (() => {
+        if (!selectedPatientLinkId) return null;
+        const match = dentistPatients.find((p) => p.id === selectedPatientLinkId);
+        return match?.id ?? null;  // dentistPatients here carries link id, not dentist id — rebuilt below
+      })();
 
-    setIsSubmitting(true);
+  // For dentists we use a different approach: links are passed via dentistPatients (id=link.id).
+  // The dentist's own id can be inferred from any link they have (they ARE the dentist).
+  // We fetch slots for the dentist (themselves). The simpler path: for dentists, slot queries
+  // hit /dentists/<self>/available-slots/. But our endpoint validates dentist===self anyway.
+  // We'll piggy-back: if dentist, only proceed when a patient link is chosen, and we'll need
+  // the dentist's own user_id. We grab it from /me/.
+  const [dentistSelfId, setDentistSelfId] = useState<string | null>(null);
+  useEffect(() => {
+    if (userRole !== 'dentist') return;
+    import('../../lib/backendApi').then(({ fetchMe }) =>
+      fetchMe().then((me) => setDentistSelfId(me.user_id))
+    );
+  }, [userRole]);
 
-    if (onCreateAppointment && userRole === 'dentist') {
-      try {
-        const created = await onCreateAppointment({
-          dentistPatientLinkId: Number(selectedPatient),
-          appointmentDate: `${selectedDate}T${selectedTime}:00`,
-          appointmentType: appointmentType.trim(),
-          duration: selectedDuration,
-          notes: notes || null,
-        });
-        setIsSubmitting(false);
-        onSuccess(created);
-      } catch {
-        setIsSubmitting(false);
-      }
+  const effectiveDentistId = userRole === 'patient' ? dentistIdForSlots : dentistSelfId;
+
+  // Window of days shown in the carousel
+  const visibleDays = useMemo(() => {
+    return Array.from({ length: VISIBLE_DAYS }, (_, i) => {
+      const d = new Date(windowStart);
+      d.setDate(windowStart.getDate() + i);
+      return d;
+    });
+  }, [windowStart]);
+
+  // Fetch slots whenever the date window or duration changes
+  useEffect(() => {
+    if (!effectiveDentistId) {
+      setSlotsResponse(null);
       return;
     }
+    const start = visibleDays[0];
+    const end = visibleDays[visibleDays.length - 1];
+    setSlotsLoading(true);
+    setSlotsError(null);
+    fetchAvailableSlots(effectiveDentistId, toIsoDate(start), toIsoDate(end), duration)
+      .then((resp) => setSlotsResponse(resp))
+      .catch(() => setSlotsError('Could not load available slots.'))
+      .finally(() => setSlotsLoading(false));
+  }, [effectiveDentistId, windowStart, duration, visibleDays]);
 
-    setIsSubmitting(false);
+  const slotsForSelected = slotsResponse?.slots[selectedDateIso] ?? [];
+  const visibleSlots = showAllSlots ? slotsForSelected : slotsForSelected.slice(0, INITIAL_SLOTS_VISIBLE);
+
+  const navigateWindow = (deltaDays: number) => {
+    const next = new Date(windowStart);
+    next.setDate(windowStart.getDate() + deltaDays);
+    if (next < today) return;
+    setWindowStart(next);
+    setShowAllSlots(false);
+    setSelectedTime('');
   };
 
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const monthLabel = `${MONTH_LABELS[windowStart.getMonth()].slice(0, 3)} ${windowStart.getFullYear()}`;
+
+  const filteredSuggestions = suggestions.filter((s) =>
+    s.toLowerCase().includes(appointmentType.toLowerCase()) && s !== appointmentType,
+  );
+
+  const canSubmit = (() => {
+    if (!selectedDateIso || !selectedTime) return false;
+    if (userRole === 'dentist' && !selectedPatientLinkId) return false;
+    if (userRole === 'patient' && !resolvedDentistLink) return false;
+    return true;
+  })();
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    const linkId = userRole === 'dentist'
+      ? Number(selectedPatientLinkId)
+      : resolvedDentistLink!.id;
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      const created = await onCreateAppointment({
+        dentistPatientLinkId: linkId,
+        appointmentDate: `${selectedDateIso}T${selectedTime}:00`,
+        appointmentType: appointmentType.trim(),
+        duration,
+        notes: notes.trim() || null,
+        proposalNote: proposalNote.trim() || null,
+        forceOverride: false,
+      });
+      onSuccess(created);
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setSubmitError(detail || 'Could not create appointment.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const selectedDateObj = (() => {
+    const [y, m, d] = selectedDateIso.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  })();
+  const formattedSelectedDate = selectedDateObj.toLocaleDateString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric',
+  });
+  const slotEndTime = (() => {
+    if (!selectedTime) return '';
+    const [h, m] = selectedTime.split(':').map(Number);
+    const start = new Date(2000, 0, 1, h, m);
+    const end = new Date(start.getTime() + duration * 60_000);
+    return `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+  })();
 
   return (
     <div className="modal-container" style={{ display: 'flex' }}>
       <div className="modal-backdrop" onClick={onClose}></div>
-      <div className="modal appointment-scheduler-modal">
-        <div className="modal-header">
-          <h2 className="modal-title">
-            {icons.calendar}
-            <span style={{ marginLeft: '8px' }}>Schedule Appointment</span>
-          </h2>
-          <button className="close-modal" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 720, maxHeight: '90vh', padding: 0, overflow: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 24px', borderBottom: '1px solid var(--color-border, #e5e7eb)' }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Schedule Appointment</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }} aria-label="Close">
             {icons.x}
           </button>
         </div>
 
-        <div className="modal-body">
-          {/* Progress Steps */}
-          <div className="scheduler-steps">
-            <div className={`scheduler-step ${step >= 1 ? 'active' : ''} ${step > 1 ? 'completed' : ''}`}>
-              <div className="step-number">{step > 1 ? icons.check : '1'}</div>
-              <span>Select Date</span>
+        <div style={{ padding: 24 }}>
+          {userRole === 'dentist' && (
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Patient</label>
+              <select
+                className="form-input"
+                value={selectedPatientLinkId}
+                onChange={(e) => setSelectedPatientLinkId(e.target.value)}
+              >
+                <option value="">Choose a patient...</option>
+                {dentistPatients.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
             </div>
-            <div className="step-line" />
-            <div className={`scheduler-step ${step >= 2 ? 'active' : ''} ${step > 2 ? 'completed' : ''}`}>
-              <div className="step-number">{step > 2 ? icons.check : '2'}</div>
-              <span>Select Time</span>
+          )}
+
+          {userRole === 'patient' && (
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Dentist</label>
+              <select
+                className="form-input"
+                value={selectedDentistLinkId}
+                onChange={(e) => {
+                  const linkId = e.target.value;
+                  setSelectedDentistLinkId(linkId);
+                  const match = patientLinks.find((l) => String(l.id) === linkId) ?? null;
+                  setResolvedDentistLink(match);
+                  setSelectedTime('');
+                  setShowAllSlots(false);
+                }}
+              >
+                <option value="">Choose a dentist...</option>
+                {patientLinks.map((link, idx) => (
+                  <option key={link.id} value={String(link.id)}>{formatDentistLabel(link, idx)}</option>
+                ))}
+              </select>
             </div>
-            <div className="step-line" />
-            <div className={`scheduler-step ${step >= 3 ? 'active' : ''}`}>
-              <div className="step-number">3</div>
-              <span>Details</span>
+          )}
+
+          {/* Card 1: date + time */}
+          <div style={{ background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border, #e5e7eb)', borderRadius: 16, padding: 24, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Select Date and Time</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', border: '1px solid var(--color-border, #e5e7eb)', borderRadius: 999, fontSize: 13 }}>
+                <button onClick={() => navigateWindow(-VISIBLE_DAYS)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }} aria-label="Previous week">
+                  {icons.chevronLeft}
+                </button>
+                <span style={{ minWidth: 90, textAlign: 'center' }}>{monthLabel}</span>
+                <button onClick={() => navigateWindow(VISIBLE_DAYS)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }} aria-label="Next week">
+                  {icons.chevronRight}
+                </button>
+              </div>
+            </div>
+
+            {/* Day carousel */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto repeat(7, 1fr) auto', gap: 6, alignItems: 'center', marginBottom: 18 }}>
+              <button
+                onClick={() => navigateWindow(-VISIBLE_DAYS)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted, #6b7280)' }}
+                aria-label="Previous"
+              >
+                {icons.chevronLeft}
+              </button>
+              {visibleDays.map((d) => {
+                const iso = toIsoDate(d);
+                const isPast = d < today;
+                const isSelected = iso === selectedDateIso;
+                const dayCount = slotsResponse?.slots[iso]?.length ?? 0;
+                const noSlots = !slotsLoading && slotsResponse !== null && dayCount === 0;
+                return (
+                  <button
+                    key={iso}
+                    onClick={() => {
+                      if (isPast) return;
+                      setSelectedDateIso(iso);
+                      setShowAllSlots(false);
+                      setSelectedTime('');
+                    }}
+                    disabled={isPast}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '10px 4px',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: isPast ? 'not-allowed' : 'pointer',
+                      color: isPast ? 'var(--color-text-muted, #d1d5db)' : 'inherit',
+                      borderBottom: isSelected ? '2px solid var(--color-primary, #10b981)' : '2px solid transparent',
+                      fontWeight: isSelected ? 600 : 400,
+                      opacity: noSlots && !isSelected ? 0.5 : 1,
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted, #9ca3af)' }}>{formatDayLabel(d, today)}</span>
+                    <span style={{ fontSize: 18 }}>{d.getDate()}</span>
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => navigateWindow(VISIBLE_DAYS)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted, #6b7280)' }}
+                aria-label="Next"
+              >
+                {icons.chevronRight}
+              </button>
+            </div>
+
+            {/* Time slots grid */}
+            <div>
+              {slotsLoading && (
+                <p style={{ color: 'var(--color-text-muted, #6b7280)', fontSize: 14, margin: '8px 0' }}>Loading slots…</p>
+              )}
+              {slotsError && (
+                <p style={{ color: 'var(--color-danger, #dc2626)', fontSize: 14, margin: '8px 0' }}>{slotsError}</p>
+              )}
+              {!slotsLoading && !slotsError && slotsForSelected.length === 0 && (
+                <p style={{ color: 'var(--color-text-muted, #6b7280)', fontSize: 14, margin: '8px 0' }}>
+                  No availability for this day.
+                </p>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: 8 }}>
+                {visibleSlots.map((time) => {
+                  const isSelected = time === selectedTime;
+                  return (
+                    <button
+                      key={time}
+                      onClick={() => setSelectedTime(time)}
+                      style={{
+                        padding: '10px 8px',
+                        background: isSelected ? 'var(--color-primary, #10b981)' : 'var(--color-surface, #fff)',
+                        color: isSelected ? '#fff' : 'inherit',
+                        border: '1px solid var(--color-border, #e5e7eb)',
+                        borderRadius: 10,
+                        cursor: 'pointer',
+                        fontSize: 14,
+                        fontWeight: isSelected ? 600 : 400,
+                      }}
+                    >
+                      {time}
+                    </button>
+                  );
+                })}
+              </div>
+              {slotsForSelected.length > INITIAL_SLOTS_VISIBLE && (
+                <button
+                  onClick={() => setShowAllSlots((v) => !v)}
+                  style={{ background: 'none', border: 'none', color: 'var(--color-primary, #10b981)', cursor: 'pointer', marginTop: 12, fontSize: 14, fontWeight: 500 }}
+                >
+                  {showAllSlots ? 'Show fewer slots' : `Show more slots`}
+                  <span style={{ color: 'var(--color-text-muted, #6b7280)', fontWeight: 400, marginLeft: 8 }}>
+                    ({slotsForSelected.length} available)
+                  </span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Step 1: Date + Patient */}
-          {step === 1 && (
-            <div className="scheduler-section">
-              {userRole === 'dentist' && (
-                <div className="form-group" style={{ marginBottom: '24px' }}>
-                  <label className="form-label">
-                    {icons.user}
-                    <span style={{ marginLeft: '8px' }}>Select Patient</span>
-                  </label>
-                  <select
-                    className="form-input"
-                    value={selectedPatient}
-                    onChange={(e) => setSelectedPatient(e.target.value)}
-                  >
-                    <option value="">Choose a patient...</option>
-                    {dentistPatients.map(patient => (
-                      <option key={patient.id} value={patient.id}>{patient.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div className="calendar-container">
-                <div className="calendar-header">
-                  <button className="calendar-nav" onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}>
-                    {icons.chevronLeft}
-                  </button>
-                  <h3>{monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}</h3>
-                  <button className="calendar-nav" onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}>
-                    {icons.chevronRight}
-                  </button>
-                </div>
-
-                <div className="calendar-weekdays">
-                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                    <div key={day} className="weekday">{day}</div>
-                  ))}
-                </div>
-
-                <div className="calendar-days">
-                  {generateCalendarDays().map((date, index) => (
-                    <div key={index} className="calendar-day-wrapper">
-                      {date ? (
-                        <button
-                          className={`calendar-day ${isDateDisabled(date) ? 'disabled' : ''} ${selectedDate === date.toISOString().split('T')[0] ? 'selected' : ''}`}
-                          onClick={() => handleDateSelect(date)}
-                          disabled={isDateDisabled(date)}
-                        >
-                          {date.getDate()}
-                        </button>
-                      ) : (
-                        <div className="calendar-day empty" />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {selectedDate && (
-                <div className="selected-date-display">
-                  Selected: <strong>{getDayName(selectedDate)}, {formatDate(selectedDate)}</strong>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Step 2: Time */}
-          {step === 2 && (
-            <div className="scheduler-section">
-              <div className="selected-date-display" style={{ marginBottom: '24px' }}>
-                📅 {getDayName(selectedDate)}, {formatDate(selectedDate)}
-              </div>
-
-              <h4 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* Card 2: currently selected */}
+          {selectedTime && (
+            <div style={{
+              background: 'var(--color-surface, #fff)',
+              border: '1px solid var(--color-border, #e5e7eb)',
+              borderRadius: 12,
+              padding: '14px 18px',
+              marginBottom: 16,
+              color: 'var(--color-text, #111827)',
+            }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary, #6b7280)', marginBottom: 4 }}>Currently Selected:</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
                 {icons.clock}
-                Available Time Slots
-              </h4>
-
-              <div className="time-slots-grid">
-                {timeSlots.map(time => (
-                  <button
-                    key={time}
-                    className={`time-slot ${selectedTime === time ? 'selected' : ''}`}
-                    onClick={() => setSelectedTime(time)}
-                  >
-                    {formatTime(time)}
-                  </button>
-                ))}
+                <span>{formattedSelectedDate}, {formatDisplayTime(selectedTime)} – {formatDisplayTime(slotEndTime)}</span>
               </div>
-
-              {selectedTime && (
-                <div className="selected-time-display">
-                  Selected: <strong>{formatTime(selectedTime)}</strong>
-                </div>
-              )}
             </div>
           )}
 
-          {/* Step 3: Details */}
-          {step === 3 && (
-            <div className="scheduler-section">
-              <div className="appointment-summary">
-                <div className="summary-item">
-                  <span className="summary-icon">{icons.calendar}</span>
-                  <span>{getDayName(selectedDate)}, {formatDate(selectedDate)}</span>
-                </div>
-                <div className="summary-item">
-                  <span className="summary-icon">{icons.clock}</span>
-                  <span>{formatTime(selectedTime)}</span>
-                </div>
-              </div>
-
-              {/* Appointment Type — free text with suggestions */}
-              <div className="form-group" style={{ position: 'relative' }}>
-                <label className="form-label">
-                  {icons.stethoscope}
-                  <span style={{ marginLeft: '8px' }}>Appointment Type</span>
-                </label>
-                <input
-                  ref={typeInputRef}
-                  className="form-input"
-                  type="text"
-                  value={appointmentType}
-                  onChange={(e) => {
-                    setAppointmentType(e.target.value);
-                    setShowSuggestions(true);
-                  }}
-                  onFocus={() => setShowSuggestions(true)}
-                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                  placeholder="e.g. Checkup, Cleaning, Root Canal..."
-                />
-                {showSuggestions && filteredSuggestions.length > 0 && (
-                  <ul style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: 0,
-                    right: 0,
-                    background: 'var(--color-surface, #fff)',
-                    border: '1px solid var(--color-border, #e5e7eb)',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                    zIndex: 100,
-                    margin: 0,
-                    padding: '4px 0',
-                    listStyle: 'none',
-                  }}>
-                    {filteredSuggestions.map(s => (
-                      <li
-                        key={s}
-                        onMouseDown={() => {
-                          setAppointmentType(s);
-                          setShowSuggestions(false);
-                        }}
-                        style={{
-                          padding: '8px 16px',
-                          cursor: 'pointer',
-                          fontSize: '14px',
-                        }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-bg-hover, #f3f4f6)')}
-                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                      >
-                        {s}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <p style={{ fontSize: '12px', color: 'var(--color-text-muted, #6b7280)', marginTop: '4px' }}>
-                  {suggestions.length > 0
-                    ? 'Start typing — your common types appear as suggestions.'
-                    : 'Type any label. Suggestions appear after you use a type 3+ times.'}
-                </p>
-              </div>
-
-              {/* Duration */}
-              <div className="form-group">
-                <label className="form-label">
-                  {icons.clock}
-                  <span style={{ marginLeft: '8px' }}>Duration</span>
-                </label>
-                <div className="duration-options">
-                  {durations.map(d => (
+          {/* Card 3: details */}
+          <div style={{ background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border, #e5e7eb)', borderRadius: 16, padding: 20, marginBottom: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Duration</label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {durations.map((d) => (
                     <button
                       key={d.value}
-                      className={`duration-option ${selectedDuration === d.value ? 'selected' : ''}`}
-                      onClick={() => setSelectedDuration(d.value)}
+                      onClick={() => setDuration(d.value)}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 999,
+                        border: '1px solid var(--color-border, #e5e7eb)',
+                        background: duration === d.value ? 'var(--color-primary, #10b981)' : 'transparent',
+                        color: duration === d.value ? '#fff' : 'inherit',
+                        cursor: 'pointer',
+                        fontSize: 14,
+                      }}
                     >
                       {d.label}
                     </button>
@@ -403,55 +488,83 @@ const AppointmentScheduler = ({ userId: _userId, userRole, dentistPatients = [],
                 </div>
               </div>
 
-              {/* Notes */}
-              <div className="form-group">
-                <label className="form-label">
-                  {icons.notes}
-                  <span style={{ marginLeft: '8px' }}>Notes (Optional)</span>
+              <div style={{ position: 'relative' }}>
+                <label style={{ display: 'block', fontSize: 14, fontWeight: 500, marginBottom: 6 }}>
+                  Appointment Type {userRole === 'patient' && <span style={{ color: 'var(--color-text-muted, #9ca3af)', fontWeight: 400 }}>(optional)</span>}
+                </label>
+                <input
+                  className="form-input"
+                  type="text"
+                  value={appointmentType}
+                  onChange={(e) => { setAppointmentType(e.target.value); setShowSuggestions(true); }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  placeholder="e.g. Checkup, Cleaning, Root Canal..."
+                />
+                {showSuggestions && filteredSuggestions.length > 0 && (
+                  <ul style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border, #e5e7eb)', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 100, margin: 0, padding: '4px 0', listStyle: 'none' }}>
+                    {filteredSuggestions.map((s) => (
+                      <li
+                        key={s}
+                        onMouseDown={() => { setAppointmentType(s); setShowSuggestions(false); }}
+                        style={{ padding: '8px 16px', cursor: 'pointer', fontSize: 14 }}
+                      >
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {userRole === 'patient' && (
+                <div>
+                  <label style={{ display: 'block', fontSize: 14, fontWeight: 500, marginBottom: 6 }}>
+                    Note to Dentist <span style={{ color: 'var(--color-text-muted, #9ca3af)', fontWeight: 400 }}>(optional)</span>
+                  </label>
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={proposalNote}
+                    onChange={(e) => setProposalNote(e.target.value)}
+                    placeholder="Anything the dentist should know about your request"
+                    maxLength={500}
+                  />
+                </div>
+              )}
+
+              <div>
+                <label style={{ display: 'block', fontSize: 14, fontWeight: 500, marginBottom: 6 }}>
+                  Notes <span style={{ color: 'var(--color-text-muted, #9ca3af)', fontWeight: 400 }}>(optional)</span>
                 </label>
                 <textarea
-                  className="form-input form-textarea"
+                  className="form-input"
+                  rows={3}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Add any notes or special requests..."
-                  rows={3}
+                  placeholder="Add any private notes…"
                 />
               </div>
+            </div>
+          </div>
+
+          {submitError && (
+            <div style={{ background: 'var(--color-danger-bg, #fee2e2)', color: 'var(--color-danger, #b91c1c)', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 14 }}>
+              {submitError}
             </div>
           )}
         </div>
 
-        <div className="modal-footer">
-          <div className="footer-left">
-            {step > 1 && (
-              <button className="btn btn--secondary" onClick={() => setStep(step - 1)}>
-                {icons.chevronLeft}
-                Back
-              </button>
-            )}
-          </div>
-          <div className="footer-right">
-            <button className="btn btn--outline" onClick={onClose}>Cancel</button>
-            {step < 3 ? (
-              <button
-                className="btn btn--primary"
-                onClick={() => setStep(step + 1)}
-                disabled={(step === 1 && (!selectedDate || (userRole === 'dentist' && !selectedPatient))) || (step === 2 && !selectedTime)}
-              >
-                Next
-                {icons.chevronRight}
-              </button>
-            ) : (
-              <button
-                className="btn btn--primary"
-                onClick={handleSubmit}
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? 'Scheduling...' : 'Confirm Appointment'}
-                {icons.check}
-              </button>
-            )}
-          </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 24px', borderTop: '1px solid var(--color-border, #e5e7eb)' }}>
+          <button className="btn btn--outline" onClick={onClose}>Cancel</button>
+          <button
+            className="btn btn--primary"
+            disabled={!canSubmit || isSubmitting}
+            onClick={handleSubmit}
+          >
+            {isSubmitting
+              ? 'Sending…'
+              : userRole === 'patient' ? 'Send Request' : 'Confirm Appointment'}
+          </button>
         </div>
       </div>
     </div>

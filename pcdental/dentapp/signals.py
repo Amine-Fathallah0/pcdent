@@ -1,8 +1,10 @@
+from datetime import time
+
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
 
-from .models import Conversation, DentistPatientLink, Message
+from .models import Conversation, Dentist, DentistPatientLink, DentistSchedule, Message
 
 
 @receiver(pre_save, sender=DentistPatientLink)
@@ -50,8 +52,25 @@ def _create_conversation_on_link_approval(sender, instance, created, **kwargs):
     )
     conversation.last_message_at = timezone.now()
     conversation.save(update_fields=['last_message_at'])
-from django.db.models.signals import post_save
-from django.dispatch import receiver
+ 
+
+@receiver(post_save, sender=Dentist)
+def _seed_default_schedule(sender, instance, created, **kwargs):
+    if not created:
+        return
+    if DentistSchedule.objects.filter(dentist=instance).exists():
+        return
+    defaults = [
+        (0, time(9, 0), time(17, 0)),
+        (1, time(9, 0), time(17, 0)),
+        (2, time(9, 0), time(17, 0)),
+        (3, time(9, 0), time(17, 0)),
+        (4, time(9, 0), time(17, 0)),
+    ]
+    DentistSchedule.objects.bulk_create([
+        DentistSchedule(dentist=instance, weekday=weekday, start_time=start, end_time=end)
+        for weekday, start, end in defaults
+    ])
 
 from .models import CTScan
 
