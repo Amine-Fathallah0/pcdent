@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import AppointmentList from '../components/appointments/AppointmentList';
 import AppointmentScheduler from '../components/appointments/AppointmentScheduler';
+import PendingRequestsWidget from '../components/appointments/PendingRequestsWidget';
 import MessagingSystem from '../components/MessagingSystem';
 import TreatmentPlanning from '../components/TreatmentPlanning';
 import FullReportModal from '../components/FullReportModal';
@@ -10,28 +11,25 @@ import PatientCaseDetailView from '../components/PatientCaseDetailView';
 import TextType from '../components/ui/TextType';
 import AnimatedList from '../components/ui/AnimatedList';
 import { Icon } from '../components/ui';
-import { fetchJob, fetchJobs, fetchMyLinks, requestDentistLink, uploadCTScan, type AIJobDto } from '../lib/backendApi';
+import { acceptAppointment, cancelAppointment, counterProposeAppointment, createAppointment, declineAppointment, fetchAppointments, fetchJob, fetchJobs, fetchMyLinks, requestDentistLink, uploadCTScan, type AIJobDto, type AppointmentDto, type NotificationDto } from '../lib/backendApi';
+import { parseBackendDateTime } from '../lib/dateTime';
 import { getBackendJobStatusLabel, getBackendJobStatusClass } from '../lib/jobUtils';
-import { 
-  database, 
+import {
+  database,
   createCase,
-  getCasesByPatient, 
-  getPatientResults, 
-  getAppointmentsByPatient,
-  getUpcomingAppointments,
+  getCasesByPatient,
+  getPatientResults,
   addNotification,
-  formatDate, 
+  formatDate,
   formatTime,
   getRelativeDate,
   getAppointmentTypeLabel,
   getStatusLabel,
   getStatusClass,
   type Case,
-  type Appointment
+  type Appointment,
 } from '../data/database';
 import './PatientDashboard.css';
-
-
 // File validation constants
 const VALID_FILE_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'application/dicom'] as const;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -46,6 +44,43 @@ const validateFile = (file: File): { valid: boolean; error?: string } => {
     return { valid: false, error: 'File too large. Maximum size is 10MB.' };
   }
   return { valid: true };
+};
+
+const formatLocalDate = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const formatLocalTime = (value: Date): string => {
+  const hours = String(value.getHours()).padStart(2, '0');
+  const minutes = String(value.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
+const mapAppointmentStatus = (status: AppointmentDto['status']): Appointment['status'] => {
+  if (status === 'no_show') return 'no-show';
+  return status;
+};
+
+const mapAppointmentDtoToUi = (appointment: AppointmentDto): Appointment => {
+  const dateValue = parseBackendDateTime(appointment.appointment_date);
+  return {
+    id: String(appointment.id),
+    patientId: appointment.patient.user.user_id,
+    patientName: appointment.patient.user.full_name,
+    patientEmail: appointment.patient.user.email,
+    dentistId: appointment.dentist.user.user_id,
+    dentistName: appointment.dentist.user.full_name,
+    date: formatLocalDate(dateValue),
+    time: formatLocalTime(dateValue),
+    duration: appointment.duration ?? 30,
+    type: appointment.appointment_type || 'consultation',
+    status: mapAppointmentStatus(appointment.status),
+    notes: appointment.notes || null,
+    createdAt: appointment.created_at,
+  };
 };
 
 
@@ -93,7 +128,8 @@ const PatientDashboard = () => {
   const [selectedJob, setSelectedJob] = useState<AIJobDto | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
-  const [appointments, setAppointments] = useState<Appointment[]>(getAppointmentsByPatient(CURRENT_PATIENT_ID));
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [appointmentDtos, setAppointmentDtos] = useState<AppointmentDto[]>([]);
   
   // Upload state
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -105,6 +141,8 @@ const PatientDashboard = () => {
   const [refreshKey, setRefreshKey] = useState(0); // Triggers backend data refresh after local updates
   const [backendJobs, setBackendJobs] = useState<AIJobDto[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const appointmentsRequestId = useRef(0);
+  const appointmentsRefreshTimer = useRef<number | null>(null);
 
   // Connect-to-dentist state
   const [connectCode, setConnectCode] = useState('');
@@ -120,9 +158,152 @@ const PatientDashboard = () => {
     }
   }, []);
 
+  const loadAppointments = useCallback(async () => {
+    const requestId = ++appointmentsRequestId.current;
+    try {
+      const items = await fetchAppointments();
+      if (requestId !== appointmentsRequestId.current) {
+        return;
+      }
+      setAppointmentDtos(items);
+      setAppointments(items.map(mapAppointmentDtoToUi));
+    } catch (error) {
+      if (requestId !== appointmentsRequestId.current) {
+        return;
+      }
+      console.error('Unable to load appointments', error);
+    }
+  }, []);
+
+  const handleAppointmentNotification = useCallback((notification: NotificationDto) => {
+    if (!notification.notification_type.startsWith('appointment_')) return;
+    void loadAppointments();
+    const detail = notification.appointment_detail ?? null;
+    const summary = notification.appointment_summary;
+    if (detail) {
+      setAppointmentDtos((prev) => {
+        const next = prev.some((item) => item.id === detail.id)
+          ? prev.map((item) => (item.id === detail.id ? detail : item))
+          : [detail, ...prev];
+        return next;
+      });
+
+      const mapped = mapAppointmentDtoToUi(detail);
+      setAppointments((prev) => {
+        const next = prev.some((item) => item.id === String(detail.id))
+          ? prev.map((item) => (item.id === String(detail.id) ? mapped : item))
+          : [mapped, ...prev];
+        return next;
+      });
+    }
+    if (summary) {
+      setAppointmentDtos((prev) => {
+        let updated = false;
+        const next = prev.map((item) => {
+          if (item.id !== summary.id) return item;
+          updated = true;
+          return {
+            ...item,
+            appointment_date: summary.appointment_date,
+            duration: summary.duration,
+            appointment_type: summary.appointment_type || item.appointment_type,
+            status: summary.status,
+          };
+        });
+        if (updated) return next;
+
+        const dentistUser = {
+          user_id: '',
+          username: '',
+          email: '',
+          full_name: summary.dentist_name,
+        };
+        const patientUser = {
+          user_id: '',
+          username: '',
+          email: '',
+          full_name: summary.patient_name,
+        };
+        const cancelledBy = summary.cancelled_by_name
+          ? { user_id: '', full_name: summary.cancelled_by_name }
+          : null;
+
+        const newDto: AppointmentDto = {
+          id: summary.id,
+          dentist_patient_link: 0,
+          patient: { user: patientUser },
+          dentist: { user: dentistUser },
+          appointment_date: summary.appointment_date,
+          status: summary.status,
+          appointment_type: summary.appointment_type || '',
+          duration: summary.duration,
+          notes: '',
+          proposal_note: '',
+          counter_proposal_count: 0,
+          last_proposed_by: null,
+          cancelled_by: cancelledBy,
+          cancellation_reason: '',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        return [newDto, ...prev];
+      });
+
+      setAppointments((prev) => {
+        let updated = false;
+        const dateValue = parseBackendDateTime(summary.appointment_date);
+        const next = prev.map((item) => {
+          if (item.id !== String(summary.id)) return item;
+          updated = true;
+          return {
+            ...item,
+            date: formatLocalDate(dateValue),
+            time: formatLocalTime(dateValue),
+            duration: summary.duration ?? item.duration,
+            type: summary.appointment_type || item.type,
+            status: mapAppointmentStatus(summary.status),
+          };
+        });
+        if (updated) return next;
+
+        const newItem: Appointment = {
+          id: String(summary.id),
+          patientId: '',
+          patientName: summary.patient_name,
+          patientEmail: '',
+          dentistId: '',
+          dentistName: summary.dentist_name,
+          date: formatLocalDate(dateValue),
+          time: formatLocalTime(dateValue),
+          duration: summary.duration ?? 30,
+          type: summary.appointment_type || 'consultation',
+          status: mapAppointmentStatus(summary.status),
+          notes: null,
+          createdAt: new Date().toISOString(),
+        };
+
+        return [newItem, ...prev];
+      });
+    }
+
+    if (appointmentsRefreshTimer.current !== null) {
+      window.clearTimeout(appointmentsRefreshTimer.current);
+    }
+    appointmentsRefreshTimer.current = window.setTimeout(() => {
+      void loadAppointments();
+    }, 500);
+  }, [loadAppointments]);
+
   useEffect(() => {
     void loadBackendJobs();
   }, [refreshKey, loadBackendJobs]);
+
+  useEffect(() => {
+    if (activeView === 'patient-dashboard' || activeView === 'patient-appointments') {
+      void loadAppointments();
+    }
+  }, [activeView, loadAppointments]);
 
   useEffect(() => {
     if (activeView !== 'patient-results' && activeView !== 'patient-case-detail') {
@@ -152,7 +333,14 @@ const PatientDashboard = () => {
   const patientCases = getCasesByPatient(CURRENT_PATIENT_ID);
   const patientResults = getPatientResults(CURRENT_PATIENT_ID);
   const { treatmentSuggestions } = database;
-  const upcomingAppointments = getUpcomingAppointments(CURRENT_PATIENT_ID, 'patient');
+  const upcomingAppointments = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return appointments
+      .filter((appointment) =>
+        appointment.date >= today && appointment.status === 'confirmed'
+      )
+      .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+  }, [appointments]);
 
   const jobsById = useMemo(() => {
     const map = new Map<string, AIJobDto>();
@@ -216,9 +404,8 @@ const PatientDashboard = () => {
   }, [sortedBackendJobs, fallbackResultCards]);
 
   // Calculate stats with useMemo
-  const { totalVisits, activeTreatments, highPriorityTreatments, lastVisitCase } = useMemo(() => ({
+  const { totalVisits, highPriorityTreatments, lastVisitCase } = useMemo(() => ({
     totalVisits: patientCases.length,
-    activeTreatments: treatmentSuggestions.length,
     highPriorityTreatments: treatmentSuggestions.filter(t => t.priority === 'High').length,
     lastVisitCase: patientCases.length > 0 
       ? [...patientCases].sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())[0]
@@ -498,6 +685,64 @@ const PatientDashboard = () => {
     }
   };
 
+  const handleCreateAppointment = useCallback(async ({
+    dentistPatientLinkId,
+    appointmentDate,
+    appointmentType,
+    duration,
+    notes,
+    proposalNote,
+    forceOverride,
+  }: {
+    dentistPatientLinkId: number;
+    appointmentDate: string;
+    appointmentType: string;
+    duration: number;
+    notes: string | null;
+    proposalNote: string | null;
+    forceOverride: boolean;
+  }) => {
+    const created = await createAppointment({
+      dentist_patient_link: dentistPatientLinkId,
+      appointment_date: appointmentDate,
+      appointment_type: appointmentType ?? '',
+      duration: duration ?? 30,
+      notes: notes ?? '',
+      proposal_note: proposalNote ?? '',
+      force_override: forceOverride,
+    });
+    return created;
+  }, []);
+
+  const handleUpdateAppointmentStatus = useCallback(async (appointmentId: string, status: Appointment['status']) => {
+    const current = appointments.find((item) => item.id === appointmentId);
+    if (!current) return;
+
+    let updated: AppointmentDto;
+    if (status === 'confirmed') {
+      updated = await acceptAppointment(Number(appointmentId));
+    } else if (status === 'cancelled') {
+      if (current.status === 'pending_dentist' || current.status === 'pending_patient') {
+        updated = await declineAppointment(Number(appointmentId), '');
+      } else {
+        updated = await cancelAppointment(Number(appointmentId), '');
+      }
+    } else {
+      return;
+    }
+
+    const mapped = mapAppointmentDtoToUi(updated);
+    setAppointmentDtos((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    setAppointments((prev) => prev.map((item) => (item.id === String(updated.id) ? mapped : item)));
+  }, [appointments]);
+
+  const handleCounterPropose = useCallback(async (appointmentId: number, payload: { appointment_date: string; duration?: number; proposal_note?: string }) => {
+    const updated = await counterProposeAppointment(appointmentId, payload);
+    const mapped = mapAppointmentDtoToUi(updated);
+    setAppointmentDtos((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    setAppointments((prev) => prev.map((item) => (item.id === String(updated.id) ? mapped : item)));
+  }, []);
+
   const renderContent = () => {
     switch (activeView) {
       // ============== PATIENT DASHBOARD ==============
@@ -572,18 +817,6 @@ const PatientDashboard = () => {
                       <span className="patient-metrics-summary__meta">{lastVisitLabel}</span>
                     </div>
                     <span className="patient-metrics-summary__value">{totalVisits}</span>
-                  </li>
-                  <li className="patient-metrics-summary__item">
-                    <div className="patient-metrics-summary__icon patient-metrics-summary__icon--orange" aria-hidden="true">
-                      <Icon name="activity" size={16} />
-                    </div>
-                    <div className="patient-metrics-summary__body">
-                      <span className="patient-metrics-summary__label">Active Treatments</span>
-                      <span className="patient-metrics-summary__meta">
-                        {highPriorityTreatments > 0 ? `${highPriorityTreatments} high priority` : 'No high priority items'}
-                      </span>
-                    </div>
-                    <span className="patient-metrics-summary__value">{activeTreatments}</span>
                   </li>
                   <li className="patient-metrics-summary__item">
                     <div className="patient-metrics-summary__icon patient-metrics-summary__icon--teal" aria-hidden="true">
@@ -1325,11 +1558,22 @@ const PatientDashboard = () => {
               </div>
             )}
 
+            <div style={{ marginBottom: 'var(--space-24)' }}>
+              <PendingRequestsWidget
+                appointments={appointmentDtos}
+                userRole="patient"
+                onAccept={(id) => handleUpdateAppointmentStatus(String(id), 'confirmed')}
+                onDecline={(id) => handleUpdateAppointmentStatus(String(id), 'cancelled')}
+                onCounterPropose={handleCounterPropose}
+              />
+            </div>
+
             <AppointmentList
               appointments={appointments}
               userRole="patient"
-              onRefresh={() => setAppointments(getAppointmentsByPatient(CURRENT_PATIENT_ID))}
+              onRefresh={() => void loadAppointments()}
               onScheduleNew={() => setShowScheduler(true)}
+              onUpdateStatus={handleUpdateAppointmentStatus}
             />
           </>
         );
@@ -1357,6 +1601,7 @@ const PatientDashboard = () => {
       activeView={activeView}
       onViewChange={setActiveView}
       reminderItems={remindMeItems}
+      onNotification={handleAppointmentNotification}
     >
       {renderContent()}
       
@@ -1374,12 +1619,13 @@ const PatientDashboard = () => {
       {/* Appointment Scheduler Modal */}
       {showScheduler && (
         <AppointmentScheduler
-          userId={CURRENT_PATIENT_ID}
           userRole="patient"
-          dentistId="dentist-001"
+          onCreateAppointment={handleCreateAppointment}
           onClose={() => setShowScheduler(false)}
           onSuccess={(appointment) => {
-            setAppointments([...appointments, appointment]);
+            const mapped = mapAppointmentDtoToUi(appointment);
+            setAppointmentDtos((prev) => [...prev, appointment]);
+            setAppointments((prev) => [...prev, mapped]);
             setShowScheduler(false);
           }}
         />

@@ -3,11 +3,12 @@ import mimetypes
 import os
 
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Count, Q
 from django.http import FileResponse, Http404
 from django.utils import timezone
 from django.utils.encoding import smart_str
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, serializers, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -31,9 +32,20 @@ from .models import (
     CTScan,
     DentalReport,
     Dentist,
+    DentistAvailabilityOverride,
     DentistPatientLink,
+    DentistSchedule,
     Message,
+    Notification,
     Patient,
+)
+from .notifications import notify
+from .scheduling import (
+    MAX_HORIZON_DAYS,
+    MAX_RANGE_DAYS,
+    MIN_LEAD_HOURS,
+    available_slots_for_range,
+    has_conflict,
 )
 from .tasks import analyze_ct_scan_and_generate_report
 from .serializers import (
@@ -44,10 +56,13 @@ from .serializers import (
     ConversationSerializer,
     CTScanSerializer,
     DentalReportSerializer,
+    DentistAvailabilityOverrideSerializer,
     DentistPatientLinkSerializer,
     DentistRegistrationSerializer,
+    DentistScheduleSerializer,
     JobReviewDecisionSerializer,
     MessageSerializer,
+    NotificationSerializer,
     PatientRegistrationSerializer,
     PendingLinkSerializer,
     UserSerializer,
@@ -75,7 +90,13 @@ def _build_auth_payload(user, is_dentist: bool):
         'email': user.email,
         'full_name': user.full_name,
         'is_dentist': is_dentist,
+        'is_admin': user.is_admin,
     }
+
+
+class IsAdminUser(permissions.BasePermission):
+    def has_permission(self, request, _view):
+        return bool(request.user and request.user.is_authenticated and request.user.is_admin)
 
 
 def _get_role_profiles(request):
@@ -289,7 +310,29 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
             raise PermissionDenied('You cannot create appointments for another dentist.')
         if patient_profile and link.patient_id != patient_profile.pk:
             raise PermissionDenied('You cannot create appointments for another patient.')
-        serializer.save()
+
+        appt_date = serializer.validated_data['appointment_date']
+        duration = serializer.validated_data.get('duration', 30)
+        _validate_proposal_window(appt_date)
+
+        force = bool(self.request.data.get('force_override'))
+        if has_conflict(link.dentist, appt_date, duration):
+            if patient_profile or not force:
+                raise serializers.ValidationError(
+                    {'detail': 'Time conflict with an existing appointment.', 'conflict': True}
+                )
+
+        # Patient-created → pending_dentist; Dentist-created → confirmed.
+        initial_status = 'pending_dentist' if patient_profile else 'confirmed'
+        appt = serializer.save(
+            status=initial_status,
+            last_proposed_by=self.request.user,
+        )
+
+        if initial_status == 'pending_dentist':
+            notify(link.dentist.dentist, 'appointment_requested', appt)
+        else:
+            notify(link.patient.patient, 'appointment_modified', appt)
 
 
 class DentistPatientLinkListView(generics.ListAPIView):
@@ -969,6 +1012,92 @@ class AnnotatedScanImageView(APIView):
         return resp
 
 
+# ─── Admin Views ─────────────────────────────────────────────────────────────
+
+class AdminStatsView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        return Response({
+            'total_dentists': Dentist.objects.filter(deleted_at__isnull=True).count(),
+            'verified_dentists': Dentist.objects.filter(deleted_at__isnull=True, is_verified=True).count(),
+            'pending_dentists': Dentist.objects.filter(deleted_at__isnull=True, is_verified=False).count(),
+            'total_patients': Patient.objects.filter(deleted_at__isnull=True).count(),
+            'total_appointments': Appointment.objects.count(),
+            'total_ai_jobs': AIProcessingJob.objects.count(),
+        })
+
+
+class AdminDentistListView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        dentists = (
+            Dentist.objects
+            .filter(deleted_at__isnull=True)
+            .select_related('dentist')
+            .annotate(patient_count=Count('dentistpatientlink'))
+        )
+        data = [
+            {
+                'id': str(d.dentist.user_id),
+                'full_name': d.dentist.full_name,
+                'email': d.dentist.email,
+                'location': d.location,
+                'contact_number': d.contact_number,
+                'dentist_code': d.dentist_code,
+                'is_verified': d.is_verified,
+                'patient_count': getattr(d, 'patient_count', 0),
+            }
+            for d in dentists
+        ]
+        return Response(data)
+
+
+class AdminVerifyDentistView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminUser]
+
+    def post(self, request, dentist_id):
+        dentist = generics.get_object_or_404(Dentist, dentist__user_id=dentist_id, deleted_at__isnull=True)
+        dentist.is_verified = True
+        dentist.save(update_fields=['is_verified'])
+        return Response({'status': 'verified'})
+
+
+class AdminSuspendDentistView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminUser]
+
+    def post(self, request, dentist_id):
+        dentist = generics.get_object_or_404(Dentist, dentist__user_id=dentist_id, deleted_at__isnull=True)
+        dentist.is_verified = False
+        dentist.save(update_fields=['is_verified'])
+        return Response({'status': 'suspended'})
+
+
+class AdminPatientListView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        patients = (
+            Patient.objects
+            .filter(deleted_at__isnull=True)
+            .select_related('patient')
+            .annotate(appointment_count=Count('dentistpatientlink__appointment'))
+        )
+        data = [
+            {
+                'id': str(p.patient.user_id),
+                'full_name': p.patient.full_name,
+                'email': p.patient.email,
+                'contact_number': p.contact_number,
+                'date_of_birth': p.date_of_birth.isoformat(),
+                'appointment_count': getattr(p, 'appointment_count', 0),
+            }
+            for p in patients
+        ]
+        return Response(data)
+
+
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
 def api_root(request):
@@ -984,5 +1113,379 @@ def api_root(request):
             "cases": "/ct-scans/",
             "jobs": "/jobs/",
             "conversations": "/conversations/",
+            "notifications": "/notifications/",
         }
     })
+
+
+# ─── Scheduling: dentist availability + slot computation ─────────────────────
+
+class DentistScheduleView(APIView):
+    """GET/PUT the dentist's recurring weekly schedule (replace whole list)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        dentist_profile, _ = _get_role_profiles(request)
+        if not dentist_profile:
+            raise PermissionDenied('Only dentists have a schedule.')
+        entries = DentistSchedule.objects.filter(dentist=dentist_profile)
+        return Response(DentistScheduleSerializer(entries, many=True).data)
+
+    def put(self, request):
+        dentist_profile, _ = _get_role_profiles(request)
+        if not dentist_profile:
+            raise PermissionDenied('Only dentists can edit a schedule.')
+        data = request.data if isinstance(request.data, list) else request.data.get('entries', [])
+        serializer = DentistScheduleSerializer(data=data, many=True)
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            DentistSchedule.objects.filter(dentist=dentist_profile).delete()
+            DentistSchedule.objects.bulk_create([
+                DentistSchedule(dentist=dentist_profile, **entry)
+                for entry in serializer.validated_data
+            ])
+        entries = DentistSchedule.objects.filter(dentist=dentist_profile)
+        return Response(DentistScheduleSerializer(entries, many=True).data)
+
+
+class DentistAvailabilityOverrideListCreateView(generics.ListCreateAPIView):
+    serializer_class = DentistAvailabilityOverrideSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        dentist_profile, _ = _get_role_profiles(self.request)
+        if not dentist_profile:
+            return DentistAvailabilityOverride.objects.none()
+        return DentistAvailabilityOverride.objects.filter(dentist=dentist_profile)
+
+    def perform_create(self, serializer):
+        dentist_profile, _ = _get_role_profiles(self.request)
+        if not dentist_profile:
+            raise PermissionDenied('Only dentists can manage availability overrides.')
+        serializer.save(dentist=dentist_profile)
+
+
+class DentistAvailabilityOverrideDetailView(generics.RetrieveDestroyAPIView):
+    serializer_class = DentistAvailabilityOverrideSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        dentist_profile, _ = _get_role_profiles(self.request)
+        if not dentist_profile:
+            return DentistAvailabilityOverride.objects.none()
+        return DentistAvailabilityOverride.objects.filter(dentist=dentist_profile)
+
+
+class DentistAvailableSlotsView(APIView):
+    """Compute available start times for a dentist over a date range.
+
+    Query params: start_date, end_date (ISO YYYY-MM-DD), duration (minutes, default 30).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, dentist_id):
+        try:
+            dentist = Dentist.objects.get(pk=dentist_id, deleted_at__isnull=True)
+        except Dentist.DoesNotExist:
+            return Response({'detail': 'Dentist not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Patients can only query dentists they have an active link with.
+        dentist_profile, patient_profile = _get_role_profiles(request)
+        if patient_profile and not DentistPatientLink.objects.filter(
+            dentist=dentist, patient=patient_profile, is_active=True
+        ).exists():
+            raise PermissionDenied('You are not connected to this dentist.')
+        if dentist_profile and dentist_profile.pk != dentist.pk:
+            raise PermissionDenied('Dentists can only query their own slots.')
+
+        from datetime import date as _date
+        try:
+            start_date = _date.fromisoformat(request.query_params.get('start_date', ''))
+            end_date = _date.fromisoformat(request.query_params.get('end_date', ''))
+            duration = int(request.query_params.get('duration', 30))
+        except ValueError:
+            return Response(
+                {'detail': 'start_date, end_date (YYYY-MM-DD) and integer duration are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if end_date < start_date:
+            return Response({'detail': 'end_date must be on or after start_date.'}, status=status.HTTP_400_BAD_REQUEST)
+        if (end_date - start_date).days > MAX_RANGE_DAYS:
+            return Response(
+                {'detail': f'Range cannot exceed {MAX_RANGE_DAYS} days.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        slots = available_slots_for_range(dentist, start_date, end_date, duration)
+        return Response({
+            'dentist_id': dentist_id,
+            'duration': duration,
+            'min_lead_hours': MIN_LEAD_HOURS,
+            'max_horizon_days': MAX_HORIZON_DAYS,
+            'slots': slots,
+        })
+
+
+# ─── Appointment workflow actions ────────────────────────────────────────────
+
+def _get_appointment_for_user(request, pk):
+    """Fetch an appointment that the user is a participant on. Raises 404/403."""
+    appt = generics.get_object_or_404(
+        Appointment.objects.select_related(
+            'dentist_patient_link__dentist__dentist',
+            'dentist_patient_link__patient__patient',
+        ),
+        pk=pk,
+        deleted_at__isnull=True,
+    )
+    dentist_profile, patient_profile = _get_role_profiles(request)
+    link = appt.dentist_patient_link
+    if dentist_profile and link.dentist_id == dentist_profile.pk:
+        return appt, 'dentist'
+    if patient_profile and link.patient_id == patient_profile.pk:
+        return appt, 'patient'
+    raise PermissionDenied('You do not have access to this appointment.')
+
+
+def _participants(appt):
+    return (
+        appt.dentist_patient_link.dentist.dentist,
+        appt.dentist_patient_link.patient.patient,
+    )
+
+
+def _other_party(appt, user):
+    dentist_user, patient_user = _participants(appt)
+    return patient_user if user.pk == dentist_user.pk else dentist_user
+
+
+def _validate_proposal_window(start_dt):
+    now = timezone.now()
+    if start_dt < now + timezone.timedelta(hours=MIN_LEAD_HOURS):
+        raise serializers.ValidationError(
+            f'Appointment must be at least {MIN_LEAD_HOURS} hours from now.'
+        )
+    if start_dt > now + timezone.timedelta(days=MAX_HORIZON_DAYS):
+        raise serializers.ValidationError(
+            f'Appointment cannot be more than {MAX_HORIZON_DAYS} days away.'
+        )
+
+
+class AppointmentCounterProposeView(APIView):
+    """Propose a new time/duration. Counter increments. Either party may call
+    while their counterpart's proposal is on the table.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        appt, role = _get_appointment_for_user(request, pk)
+
+        if role == 'dentist' and appt.status != 'pending_dentist':
+            return Response({'detail': "It's not your turn to propose."}, status=status.HTTP_400_BAD_REQUEST)
+        if role == 'patient' and appt.status != 'pending_patient':
+            return Response({'detail': "It's not your turn to propose."}, status=status.HTTP_400_BAD_REQUEST)
+        if appt.counter_proposal_count >= Appointment.MAX_COUNTER_PROPOSALS:
+            return Response(
+                {'detail': 'Maximum counter-proposals reached. Accept or decline instead.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_date_raw = request.data.get('appointment_date')
+        new_duration = request.data.get('duration', appt.duration)
+        new_note = request.data.get('proposal_note', '')
+
+        if not new_date_raw:
+            return Response({'detail': 'appointment_date is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            new_date = serializers.DateTimeField().to_internal_value(new_date_raw)
+            new_duration = int(new_duration)
+        except (serializers.ValidationError, ValueError):
+            return Response({'detail': 'Invalid appointment_date or duration.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            _validate_proposal_window(new_date)
+        except serializers.ValidationError as err:
+            return Response({'detail': err.detail[0] if isinstance(err.detail, list) else str(err.detail)},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        force = bool(request.data.get('force_override'))
+        if has_conflict(appt.dentist_patient_link.dentist, new_date, new_duration, exclude_id=appt.pk):
+            if role == 'patient' or not force:
+                return Response(
+                    {'detail': 'Time conflict with an existing appointment.', 'conflict': True},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        appt.appointment_date = new_date
+        appt.duration = new_duration
+        appt.proposal_note = new_note
+        appt.counter_proposal_count += 1
+        appt.last_proposed_by = request.user
+        appt.status = 'pending_patient' if role == 'dentist' else 'pending_dentist'
+        appt.save(update_fields=[
+            'appointment_date', 'duration', 'proposal_note',
+            'counter_proposal_count', 'last_proposed_by', 'status', 'updated_at',
+        ])
+
+        notify(_other_party(appt, request.user), 'appointment_counter_proposed', appt)
+        return Response(AppointmentSerializer(appt).data)
+
+
+class AppointmentAcceptView(APIView):
+    """Accept the current proposal — moves to 'confirmed'."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        appt, role = _get_appointment_for_user(request, pk)
+
+        if role == 'dentist' and appt.status != 'pending_dentist':
+            return Response({'detail': "Nothing pending your acceptance."}, status=status.HTTP_400_BAD_REQUEST)
+        if role == 'patient' and appt.status != 'pending_patient':
+            return Response({'detail': "Nothing pending your acceptance."}, status=status.HTTP_400_BAD_REQUEST)
+
+        force = bool(request.data.get('force_override'))
+        if has_conflict(appt.dentist_patient_link.dentist, appt.appointment_date, appt.duration, exclude_id=appt.pk):
+            if role == 'patient' or not force:
+                return Response(
+                    {'detail': 'Time conflict with an existing appointment.', 'conflict': True},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        appt.status = 'confirmed'
+        appt.save(update_fields=['status', 'updated_at'])
+
+        notify(_other_party(appt, request.user), 'appointment_accepted', appt)
+        return Response(AppointmentSerializer(appt).data)
+
+
+class AppointmentDeclineView(APIView):
+    """Decline the current proposal — moves to 'cancelled'. Negotiation ends."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        appt, role = _get_appointment_for_user(request, pk)
+
+        if appt.status not in ('pending_dentist', 'pending_patient'):
+            return Response({'detail': 'No pending proposal to decline.'}, status=status.HTTP_400_BAD_REQUEST)
+        if role == 'dentist' and appt.status != 'pending_dentist':
+            return Response({'detail': "Not your turn."}, status=status.HTTP_400_BAD_REQUEST)
+        if role == 'patient' and appt.status != 'pending_patient':
+            return Response({'detail': "Not your turn."}, status=status.HTTP_400_BAD_REQUEST)
+
+        appt.status = 'cancelled'
+        appt.cancelled_by = request.user
+        appt.cancellation_reason = request.data.get('reason', '')
+        appt.save(update_fields=['status', 'cancelled_by', 'cancellation_reason', 'updated_at'])
+
+        notify(_other_party(appt, request.user), 'appointment_declined', appt)
+        return Response(AppointmentSerializer(appt).data)
+
+
+class AppointmentCancelView(APIView):
+    """Cancel a non-terminal appointment. Either party can call."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        appt, _role = _get_appointment_for_user(request, pk)
+
+        if appt.status in Appointment.TERMINAL_STATUSES:
+            return Response({'detail': 'Appointment is already in a terminal state.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        appt.status = 'cancelled'
+        appt.cancelled_by = request.user
+        appt.cancellation_reason = request.data.get('reason', '')
+        appt.save(update_fields=['status', 'cancelled_by', 'cancellation_reason', 'updated_at'])
+
+        notify(_other_party(appt, request.user), 'appointment_cancelled', appt)
+        return Response(AppointmentSerializer(appt).data)
+
+
+class AppointmentCompleteView(APIView):
+    """Dentist marks an appointment as completed. Only allowed once the
+    appointment date has passed.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        appt, role = _get_appointment_for_user(request, pk)
+        if role != 'dentist':
+            raise PermissionDenied('Only the dentist can mark completed.')
+
+        if appt.appointment_date > timezone.now():
+            return Response({'detail': 'Cannot complete a future appointment.'}, status=status.HTTP_400_BAD_REQUEST)
+        # Allow flipping no_show → completed within 7 days; reject otherwise.
+        if appt.status == 'cancelled':
+            return Response({'detail': 'Cancelled appointments cannot be completed.'}, status=status.HTTP_400_BAD_REQUEST)
+        if appt.status == 'no_show':
+            if timezone.now() - appt.appointment_date > timezone.timedelta(days=7):
+                return Response({'detail': 'Beyond 7-day correction window.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        appt.status = 'completed'
+        appt.save(update_fields=['status', 'updated_at'])
+        return Response(AppointmentSerializer(appt).data)
+
+
+class AppointmentNoShowView(APIView):
+    """Dentist marks an appointment as no_show. Same time guards as completion."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        appt, role = _get_appointment_for_user(request, pk)
+        if role != 'dentist':
+            raise PermissionDenied('Only the dentist can mark no-show.')
+
+        if appt.appointment_date > timezone.now():
+            return Response({'detail': 'Cannot mark a future appointment as no-show.'}, status=status.HTTP_400_BAD_REQUEST)
+        if appt.status == 'cancelled':
+            return Response({'detail': 'Cancelled appointments cannot be marked no-show.'}, status=status.HTTP_400_BAD_REQUEST)
+        if appt.status == 'completed':
+            if timezone.now() - appt.appointment_date > timezone.timedelta(days=7):
+                return Response({'detail': 'Beyond 7-day correction window.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        appt.status = 'no_show'
+        appt.save(update_fields=['status', 'updated_at'])
+        return Response(AppointmentSerializer(appt).data)
+
+
+# ─── Notifications ────────────────────────────────────────────────────────────
+
+class NotificationListView(generics.ListAPIView):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = Notification.objects.filter(recipient=self.request.user).select_related(
+            'related_appointment',
+            'related_appointment__dentist_patient_link__dentist__dentist',
+            'related_appointment__dentist_patient_link__patient__patient',
+        )
+        if self.request.query_params.get('unread') == 'true':
+            qs = qs.filter(is_read=False)
+        return qs
+
+
+class NotificationReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            notif = Notification.objects.get(pk=pk, recipient=request.user)
+        except Notification.DoesNotExist:
+            raise Http404('Notification not found.')
+        if not notif.is_read:
+            notif.is_read = True
+            notif.read_at = timezone.now()
+            notif.save(update_fields=['is_read', 'read_at'])
+        return Response(NotificationSerializer(notif).data)
+
+
+class NotificationReadAllView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        Notification.objects.filter(recipient=request.user, is_read=False).update(
+            is_read=True, read_at=timezone.now()
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)

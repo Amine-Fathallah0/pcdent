@@ -135,12 +135,13 @@ const AppointmentList = ({ appointments, userRole, onRefresh, onScheduleNew, onU
 
   const today = new Date().toISOString().split('T')[0];
 
-  const upcomingAppointments = appointments.filter(a => 
-    a.date >= today && (a.status === 'scheduled' || a.status === 'confirmed')
-  ).sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+  const upcomingAppointments = appointments.filter(a => {
+    if (a.date < today) return false;
+    return a.status === 'confirmed';
+  }).sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
 
   const pastAppointments = appointments.filter(a => 
-    a.date < today || a.status === 'completed' || a.status === 'cancelled'
+    a.date < today || a.status === 'completed' || a.status === 'cancelled' || a.status === 'no-show'
   ).sort((a, b) => `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`));
 
   const displayAppointments = activeTab === 'upcoming' ? upcomingAppointments : pastAppointments;
@@ -148,7 +149,7 @@ const AppointmentList = ({ appointments, userRole, onRefresh, onScheduleNew, onU
   const handleConfirm = async (appointmentId: string) => {
     try {
       if (onUpdateStatus) {
-        await onUpdateStatus(appointmentId, 'scheduled');
+        await onUpdateStatus(appointmentId, 'confirmed');
       } else {
         updateAppointmentStatus(appointmentId, 'confirmed');
       }
@@ -190,6 +191,35 @@ const AppointmentList = ({ appointments, userRole, onRefresh, onScheduleNew, onU
     } catch {
       setActionFeedback({ type: 'error', message: 'Unable to update appointment.' });
       setTimeout(() => setActionFeedback(null), 3000);
+    }
+  };
+
+  const handleNoShow = async (appointmentId: string) => {
+    try {
+      if (onUpdateStatus) {
+        await onUpdateStatus(appointmentId, 'no-show');
+      } else {
+        updateAppointmentStatus(appointmentId, 'no-show');
+      }
+      setActionFeedback({ type: 'success', message: 'Marked as no-show.' });
+      onRefresh();
+      setTimeout(() => setActionFeedback(null), 3000);
+    } catch {
+      setActionFeedback({ type: 'error', message: 'Unable to update appointment.' });
+      setTimeout(() => setActionFeedback(null), 3000);
+    }
+  };
+
+  const formatStatus = (status: Appointment['status']) => {
+    switch (status) {
+      case 'pending_dentist':
+        return 'Pending Dentist';
+      case 'pending_patient':
+        return 'Pending Patient';
+      case 'no-show':
+        return 'No Show';
+      default:
+        return status.charAt(0).toUpperCase() + status.slice(1);
     }
   };
 
@@ -262,7 +292,7 @@ const AppointmentList = ({ appointments, userRole, onRefresh, onScheduleNew, onU
                     <span>{getAppointmentTypeLabel(appointment.type)}</span>
                   </div>
                   <span className={`appointment-status-badge ${appointment.status}`}>
-                    {appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)}
+                    {formatStatus(appointment.status)}
                   </span>
                 </div>
 
@@ -286,22 +316,48 @@ const AppointmentList = ({ appointments, userRole, onRefresh, onScheduleNew, onU
                 {/* Actions */}
                 {activeTab === 'upcoming' && (
                   <div className="appointment-actions">
-                    {appointment.status === 'scheduled' && userRole === 'dentist' && (
-                      <button className="btn btn--sm btn--success" onClick={() => handleConfirm(appointment.id)}>
-                        {icons.check}
-                        <span>Confirm</span>
-                      </button>
+                    {appointment.status === 'pending_dentist' && userRole === 'dentist' && (
+                      <>
+                        <button className="btn btn--sm btn--success" onClick={() => handleConfirm(appointment.id)}>
+                          {icons.check}
+                          <span>Accept</span>
+                        </button>
+                        <button className="btn btn--sm btn--danger-outline" onClick={() => handleCancel(appointment.id)}>
+                          {icons.x}
+                          <span>Decline</span>
+                        </button>
+                      </>
+                    )}
+                    {appointment.status === 'pending_patient' && userRole === 'patient' && (
+                      <>
+                        <button className="btn btn--sm btn--success" onClick={() => handleConfirm(appointment.id)}>
+                          {icons.check}
+                          <span>Accept</span>
+                        </button>
+                        <button className="btn btn--sm btn--danger-outline" onClick={() => handleCancel(appointment.id)}>
+                          {icons.x}
+                          <span>Decline</span>
+                        </button>
+                      </>
                     )}
                     {userRole === 'dentist' && appointment.status === 'confirmed' && (
-                      <button className="btn btn--sm btn--primary" onClick={() => handleComplete(appointment.id)}>
-                        {icons.check}
-                        <span>Mark Complete</span>
+                      <>
+                        <button className="btn btn--sm btn--primary" onClick={() => handleComplete(appointment.id)}>
+                          {icons.check}
+                          <span>Mark Complete</span>
+                        </button>
+                        <button className="btn btn--sm btn--outline" onClick={() => handleNoShow(appointment.id)}>
+                          {icons.x}
+                          <span>No Show</span>
+                        </button>
+                      </>
+                    )}
+                    {appointment.status === 'confirmed' && (
+                      <button className="btn btn--sm btn--danger-outline" onClick={() => handleCancel(appointment.id)}>
+                        {icons.x}
+                        <span>Cancel</span>
                       </button>
                     )}
-                    <button className="btn btn--sm btn--danger-outline" onClick={() => handleCancel(appointment.id)}>
-                      {icons.x}
-                      <span>Cancel</span>
-                    </button>
                   </div>
                 )}
               </div>

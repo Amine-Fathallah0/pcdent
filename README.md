@@ -312,6 +312,8 @@ If an error occurs during processing:
 failed
 ```
 
+The weights are not committed to the repository.
+
 ---
 
 ## Report Status Flow
@@ -326,7 +328,10 @@ confirmed
 
 Confirmed reports are treated as final and cannot be edited again through the normal workflow.
 
----
+```bash
+# Windows
+env\Scripts\activate
+```
 
 ## Main API Groups
 

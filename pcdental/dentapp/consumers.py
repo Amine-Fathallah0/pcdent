@@ -56,3 +56,10 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             'conversation_id': event['conversation_id'],
             'reader_id': event['reader_id'],
         })
+
+    async def notification_new(self, event):
+        """Forward an appointment notification event."""
+        await self.send_json({
+            'type': 'notification.new',
+            'notification': event['notification'],
+        })
